@@ -1,1 +1,29 @@
+# Rust
 /target
+**/*.rs.bk
+Cargo.lock.bak
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Models (large binary files)
+models/
+*.gguf
+*.bin
+*.safetensors
+
+# Docker
+.dockerignore
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

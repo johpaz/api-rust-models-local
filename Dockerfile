@@ -1,5 +1,5 @@
 # Stage 1: Build
-FROM rust:1.81-slim-bookworm as builder
+FROM rust:1.86-slim-bookworm as builder
 
 WORKDIR /usr/src/app
 
@@ -9,12 +9,16 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     pkg-config \
     libssl-dev \
+    libclang-dev \
+    clang \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy manifests
+# Copy manifest and lock (if it exists)
 COPY Cargo.toml Cargo.lock ./
 
 # Pre-build dependencies for caching
+# We create a dummy src/main.rs to build dependencies
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
 # Copy source code
@@ -34,6 +38,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     libssl3 \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
