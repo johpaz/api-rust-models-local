@@ -1,0 +1,33 @@
+services:
+  llm-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: llm-api-server
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - MODEL_PATH=/models/model.gguf
+      - API_TOKEN=${API_TOKEN:-secure-token-here}
+      - CONTEXT_SIZE=${CONTEXT_SIZE:-4096}
+      - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
+      - MAX_CONCURRENCY=${MAX_CONCURRENCY:-1}
+      - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
+      - RATE_LIMIT_SECONDS=${RATE_LIMIT_SECONDS:-60}
+      - RUST_LOG=info
+    deploy:
+      resources:
+        limits:
+          memory: 32G # Adjustable based on model size
+          # cpu: "8.0" # Optional, depending on VPS capacity
+    networks:
+      - llm-network
+
+networks:
+  llm-network:
+    driver: bridge

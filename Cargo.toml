@@ -1,0 +1,29 @@
+[package]
+name = "rust_llm_api"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+async-stream = "0.3.6"
+async-trait = "0.1.89"
+axum = { version = "0.8.8", features = ["json", "tokio", "http2"] }
+axum-extra = { version = "0.12.5", features = ["typed-header"] }
+chrono = "0.4.44"
+dashmap = "6.1.0"
+dotenvy = "0.15.7"
+eventsource-stream = "0.2.3"
+futures-util = "0.3.32"
+governor = "0.10.4"
+llama-cpp-2 = "0.1.141"
+num_cpus = "1.17.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "1.51.0", features = ["full"] }
+tokio-stream = "0.1.18"
+tower = { version = "0.5.3", features = ["full"] }
+tower-http = { version = "0.6.8", features = ["full", "auth", "cors"] }
+tower_governor = "0.8.0"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
+uuid = { version = "1.23.0", features = ["v4"] }
+validator = { version = "0.20.0", features = ["derive"] }
