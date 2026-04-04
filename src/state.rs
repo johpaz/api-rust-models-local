@@ -9,7 +9,7 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config) -> Self {
-        let engine = Arc::new(LlamaEngine::new(config.clone()).await.expect("Failed to initialize llama engine"));
+        let engine = Arc::new(LlamaEngine::new(config.clone()).await.expect("Failed to connect to llama-server"));
         Self {
             config,
             engine,

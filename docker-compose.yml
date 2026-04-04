@@ -1,4 +1,31 @@
 services:
+  llama-server:
+    build:
+      context: .
+      dockerfile: llama-server.Dockerfile
+    container_name: llama-server
+    restart: unless-stopped
+    volumes:
+      - ./models:/models:ro
+    environment:
+      - LLAMA_ARG_MODEL=${MODEL_PATH:-/models/model.gguf}
+      - LLAMA_ARG_HOST=0.0.0.0
+      - LLAMA_ARG_PORT=8080
+      - LLAMA_ARG_N_CTX=${CONTEXT_SIZE:-4096}
+      - LLAMA_ARG_N_PARALLEL=${MAX_CONCURRENCY:-1}
+    deploy:
+      resources:
+        limits:
+          memory: 30G
+    networks:
+      - llm-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+
   llm-api:
     build:
       context: .
@@ -6,25 +33,23 @@ services:
     container_name: llm-api-server
     restart: unless-stopped
     ports:
-      - "8080:8080"
-    volumes:
-      - ./models:/models:ro
+      - "8080:3000"
+    depends_on:
+      llama-server:
+        condition: service_healthy
     environment:
-      - PORT=8080
+      - PORT=3000
       - HOST=0.0.0.0
-      - MODEL_PATH=${MODEL_PATH}
+      - LLAMA_SERVER_URL=http://llama-server:8080
       - API_TOKEN=${API_TOKEN:-secure-token-here}
-      - CONTEXT_SIZE=${CONTEXT_SIZE:-4096}
       - DEFAULT_TEMPERATURE=${DEFAULT_TEMPERATURE:-0.7}
-      - MAX_CONCURRENCY=${MAX_CONCURRENCY:-1}
       - RATE_LIMIT_REQUESTS=${RATE_LIMIT_REQUESTS:-100}
       - RATE_LIMIT_SECONDS=${RATE_LIMIT_SECONDS:-60}
       - RUST_LOG=info
     deploy:
       resources:
         limits:
-          memory: 32G # Adjustable based on model size
-          # cpu: "8.0" # Optional, depending on VPS capacity
+          memory: 512M
     networks:
       - llm-network
 

@@ -5,17 +5,13 @@ edition = "2021"
 
 [dependencies]
 async-stream = "0.3"
-async-trait = "0.1"
 axum = { version = "0.7", features = ["json", "tokio", "http2"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 chrono = { version = "0.4", features = ["serde"] }
-dashmap = "6"
 dotenvy = "0.15"
-eventsource-stream = "0.2"
 futures-util = "0.3"
 governor = "0.6"
-llama-cpp-2 = { git = "https://github.com/utilityai/llama-cpp-rs", branch = "main" }
-num_cpus = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1"
@@ -28,11 +24,3 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 validator = { version = "0.16", features = ["derive"] }
-
-# Pin getrandom to a stable version that doesn't require edition 2024
-getrandom = "0.2.15"
-rand = "0.8"
-rand_core = "0.6"
-
-[patch.crates-io]
-getrandom = { git = "https://github.com/rust-random/getrandom.git", rev = "v0.2.15" }
