@@ -11,11 +11,11 @@ use axum_extra::headers::Authorization;
 use axum_extra::headers::authorization::Bearer;
 use axum_extra::TypedHeader;
 
-pub async fn auth_middleware<B>(
+pub async fn auth_middleware(
     State(state): State<Arc<AppState>>,
     maybe_auth: Option<TypedHeader<Authorization<Bearer>>>,
-    request: Request<B>,
-    next: Next<B>,
+    request: Request<axum::body::Body>,
+    next: Next,
 ) -> Result<Response, AppError> {
     let auth = maybe_auth.ok_or(AppError::Unauthorized)?;
 

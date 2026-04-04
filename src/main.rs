@@ -47,9 +47,7 @@ async fn main() {
             .route("/models", get(models::list_models))
             .layer(from_fn_with_state(state.clone(), auth_middleware))
         )
-        .layer(GovernorLayer {
-            config: governor_conf,
-        })
+        .layer(GovernorLayer { config: governor_conf })
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);
