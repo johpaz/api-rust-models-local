@@ -62,22 +62,12 @@ API HTTP multi-modelo con compresión **TurboQuant** para el cache KV.
 **Estado**: ✅ Verificado funcionando con GPU Vulkan (Abril 2026)
 
 ```bash
-# 1. Iniciar llama-server directamente (puerto 8080)
-cd "/api rust model local"
+# 1. Configurar (.env)
+cp .env.example .env
+nano .env  # Editar MODEL_NAME, GPU_LAYERS, etc.
 
-setsid env \
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
-  MESA_VK_WSI=1 \
-  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
-  --model "./models/google_gemma-4-E4B-it-Q4_K_M.gguf" \
-  --host 0.0.0.0 --port 8080 \
-  --ctx-size 4096 --n-gpu-layers 35 \
-  --cache-type-k q4_0 --cache-type-v q4_0 \
-  > /tmp/llama.log 2>&1 &
-disown
-
-# 2. Esperar carga del modelo (~20s)
-sleep 20
+# 2. Iniciar (lee configuración desde .env)
+./scripts/start-llama-server.sh
 
 # 3. Verificar
 curl http://localhost:8080/health
@@ -87,7 +77,18 @@ curl http://localhost:8080/health
 **Verificar GPU activa:**
 ```bash
 grep -i "offload" /tmp/llama.log
-# Deberías ver: "offloaded 35/43 layers to GPU"
+```
+
+**Detener servidor:**
+```bash
+pkill -f "llama-server"
+```
+
+**Cambiar de modelo:**
+```bash
+nano .env  # Cambiar MODEL_NAME
+pkill -f "llama-server"
+./scripts/start-llama-server.sh
 ```
 
 **Ventajas:**
@@ -96,6 +97,7 @@ grep -i "offload" /tmp/llama.log
 - ✅ Boot instantáneo
 - ✅ Menor uso de memoria
 - ✅ TurboQuant parches compilados (idempotentes)
+- ✅ Configuración centralizada en `.env`
 
 Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa y systemd.
 
@@ -124,7 +126,7 @@ setsid env \
   VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
   MESA_VK_WSI=1 \
   "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
-  --model "./models/google_gemma-4-26B-A4B-it-IQ2_XXS.gguf" \
+  --model "./models/Qwen3.5-9B.Q8_0.gguf" \
   --host 0.0.0.0 --port 8080 \
   --ctx-size 4096 --n-gpu-layers 35 \
   --cache-type-k q4_0 --cache-type-v q4_0 \
@@ -209,7 +211,8 @@ ps aux | grep "[l]lama-server"
 │   ├── TURBOQUANT.md       ← TurboQuant algoritmo
 │   └── STATUS.md           ← Estado de componentes
 ├── scripts/                ← Utilidades
-│   ├── install-native.sh   ← Instalador nativo
+│   ├── start-llama-server.sh  ← Iniciar servidor (lee .env)
+│   ├── install-native.sh   ← Instalador nativo + systemd
 │   ├── build-api.sh        ← Build API Rust
 │   └── build-llama-server.sh ← Build llama.cpp
 ├── systemd/                ← Servicios systemd
@@ -222,12 +225,13 @@ ps aux | grep "[l]lama-server"
 
 | Comando | Descripción |
 |---------|-------------|
+| `./scripts/start-llama-server.sh` | Iniciar servidor (lee .env) |
 | `pkill -f "llama-server"` | Detener servidor |
 | `tail -f /tmp/llama.log` | Ver logs en tiempo real |
 | `curl http://localhost:8080/health` | Verificar estado |
 | `grep -i "offload" /tmp/llama.log` | Verificar GPU activa |
-| `sudo ./scripts/install-native.sh` | Instalación completa + systemd |
-| `sudo journalctl -u llama-server -f` | Ver logs systemd (si instalado) |
+| `./scripts/build-llama-server.sh` | Recompilar llama.cpp |
+| `./scripts/build-api.sh` | Recompilar API Rust |
 
 ## 📡 API Endpoints
 

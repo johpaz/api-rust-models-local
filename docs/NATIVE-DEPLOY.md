@@ -23,22 +23,26 @@ Guía para desplegar el LLM API Server como **binarios nativos** con servicios s
 ### Comandos para iniciar (funcionando):
 
 ```bash
-# Iniciar llama-server con GPU Vulkan
-cd "/home/johnpaez/Documentos/llm/api rust model local"
-setsid env \
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
-  MESA_VK_WSI=1 \
-  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
-  --model "./models/google_gemma-4-E4B-it-Q4_K_M.gguf" \
-  --host 0.0.0.0 --port 8080 \
-  --ctx-size 4096 --n-gpu-layers 35 \
-  --cache-type-k q4_0 --cache-type-v q4_0 \
-  > /tmp/llama.log 2>&1 &
-disown
+# Método simple: lee configuración desde .env
+./scripts/start-llama-server.sh
 
 # Verificar (esperar ~20s para carga del modelo)
 sleep 20 && curl -s http://localhost:8080/health
 # Respuesta esperada: {"status":"ok"}
+
+# Detener
+pkill -f "llama-server"
+```
+
+**Variables de entorno (.env):**
+```bash
+PORT=8080
+HOST=0.0.0.0
+MODEL_NAME=google_gemma-4-26B-A4B-it-IQ2_XXS.gguf
+CONTEXT_SIZE=4096
+GPU_LAYERS=35
+LLAMA_ARG_CACHE_TYPE_K=turbo3
+LLAMA_ARG_CACHE_TYPE_V=turbo3
 ```
 
 ### Verificar GPU activa:
