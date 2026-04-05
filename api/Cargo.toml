@@ -5,12 +5,16 @@ edition = "2021"
 
 [dependencies]
 async-stream = "0.3"
-axum = { version = "0.7", features = ["json", "tokio", "http2"] }
+async-trait = "0.1"
+axum = { version = "0.7", features = ["json", "tokio", "http2", "multipart"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
 chrono = { version = "0.4", features = ["serde"] }
+dashmap = "6"
 dotenvy = "0.15"
+eventsource-stream = "0.2"
 futures-util = "0.3"
 governor = "0.6"
+num_cpus = "1"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -24,3 +28,6 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 validator = { version = "0.16", features = ["derive"] }
+
+[patch.crates-io]
+getrandom = { git = "https://github.com/rust-random/getrandom.git", rev = "v0.2.15" }

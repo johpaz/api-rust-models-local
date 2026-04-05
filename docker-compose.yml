@@ -1,22 +1,28 @@
 services:
+  # ═══════════════════════════════════════════════════════
+  # llama-server: Motor de inferencia con TurboQuant
+  # ═══════════════════════════════════════════════════════
   llama-server:
     build:
-      context: .
-      dockerfile: llama-server.Dockerfile
+      context: ./llama-server
+      dockerfile: Dockerfile
     container_name: llama-server
     restart: unless-stopped
     volumes:
       - ./models:/models:ro
     environment:
-      - LLAMA_ARG_MODEL=${MODEL_PATH:-/models/model.gguf}
+      - LLAMA_ARG_MODEL=/models/${MODEL_NAME:-model.gguf}
       - LLAMA_ARG_HOST=0.0.0.0
       - LLAMA_ARG_PORT=8080
-      - LLAMA_ARG_N_CTX=${CONTEXT_SIZE:-4096}
+      - LLAMA_ARG_CTX_SIZE=${CONTEXT_SIZE:-8192}
       - LLAMA_ARG_N_PARALLEL=${MAX_CONCURRENCY:-1}
+      - LLAMA_ARG_N_GPU_LAYERS=0
+      - LLAMA_ARG_CACHE_TYPE_K=${CACHE_TYPE_K:-turbo3}
+      - LLAMA_ARG_CACHE_TYPE_V=${CACHE_TYPE_V:-turbo3}
     deploy:
       resources:
         limits:
-          memory: 30G
+          memory: ${MODEL_MEMORY_LIMIT:-30G}
     networks:
       - llm-network
     healthcheck:
@@ -26,14 +32,17 @@ services:
       retries: 5
       start_period: 120s
 
-  llm-api:
+  # ═══════════════════════════════════════════════════════
+  # API Rust: Servidor HTTP OpenAI-compatible
+  # ═══════════════════════════════════════════════════════
+  api:
     build:
-      context: .
+      context: ./api
       dockerfile: Dockerfile
     container_name: llm-api-server
     restart: unless-stopped
     ports:
-      - "8080:3000"
+      - "${API_PORT:-9000}:3000"
     depends_on:
       llama-server:
         condition: service_healthy

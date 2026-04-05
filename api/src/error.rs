@@ -31,6 +31,12 @@ pub enum AppError {
 
     #[error("Model generation timeout")]
     Timeout,
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
+
+    #[error("Bad request: {0}")]
+    BadRequest(String),
 }
 
 impl IntoResponse for AppError {
@@ -46,6 +52,8 @@ impl IntoResponse for AppError {
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
             }
             AppError::Timeout => (StatusCode::GATEWAY_TIMEOUT, self.to_string()),
+            AppError::NotImplemented(_) => (StatusCode::NOT_IMPLEMENTED, self.to_string()),
+            AppError::BadRequest(_) => (StatusCode::BAD_REQUEST, self.to_string()),
         };
 
         let body = Json(json!({

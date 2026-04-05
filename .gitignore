@@ -1,29 +1,36 @@
-# Rust
-/target
-**/*.rs.bk
-Cargo.lock.bak
+# Modelos (muy grandes para git)
+models/*.gguf
+models/*.safetensors
+!models/.gitkeep
 
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Models (large binary files)
-models/
-*.gguf
-*.bin
-*.safetensors
+# Build artifacts
+api/target/
+llama-server/build/
+llama-server/*.gguf
 
 # Docker
-.dockerignore
+*.qcow2
+*.raw
+*.vdi
 
-# Editor
-.vscode/
+# IDE
 .idea/
+.vscode/
 *.swp
 *.swo
-*~
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Temporary
+tmp/
+temp/

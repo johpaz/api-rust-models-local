@@ -10,13 +10,14 @@ use axum::{
     Router,
     middleware::from_fn_with_state,
 };
+use axum::extract::DefaultBodyLimit;
 use crate::config::Config;
 use crate::state::AppState;
 use crate::middleware::auth::auth_middleware;
-use crate::routes::{chat, models, health};
+use crate::routes::{chat, models, health, image, audio};
 use std::sync::Arc;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tower_http::{cors::CorsLayer, trace::TraceLayer};
+use tower_http::{cors::CorsLayer, trace::TraceLayer, limit::RequestBodyLimitLayer};
 use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
 #[tokio::main]
@@ -41,13 +42,17 @@ async fn main() {
     let app = Router::new()
         // Public routes
         .route("/health", get(health::health_check))
-        // Protected routes
+        // Protected routes (auth + rate limiting)
         .nest("/v1", Router::new()
             .route("/chat/completions", post(chat::chat_completions))
             .route("/models", get(models::list_models))
+            .route("/images/generations", post(image::generate_image))
+            .route("/audio/speech", post(audio::create_speech))
+            .route("/audio/transcriptions", post(audio::create_transcription))
             .layer(from_fn_with_state(state.clone(), auth_middleware))
+            .layer(GovernorLayer { config: governor_conf })
+            .layer(DefaultBodyLimit::max(100 * 1024 * 1024)) // 100MB for audio/image uploads
         )
-        .layer(GovernorLayer { config: governor_conf })
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
         .with_state(state);

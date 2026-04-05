@@ -1,0 +1,45 @@
+# ═══════════════════════════════════════════════════════
+# API Rust Server
+# ═══════════════════════════════════════════════════════
+
+# Build artifacts
+target/
+**/*.rs.bk
+*.pdb
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment (no secrets in image)
+.env
+.env.local
+.env.*.local
+
+# Models (mounted as volume, not baked in)
+models/*.gguf
+models/*.safetensors
+
+# Logs
+logs/
+*.log
+
+# Docker
+docker-compose*.yml
+llama-server/
+
+# Git
+.git/
+.gitignore
+
+# Docs (not needed in runtime image)
+docs/
+README.md
+scripts/
