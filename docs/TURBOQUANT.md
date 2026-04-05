@@ -13,23 +13,46 @@ Basado en el paper de Google Research:
 | **Parches** | ✅ Idempotentes | Script Python (`apply-turboquant.py`) — seguro ejecutar múltiples veces |
 | **Tipos GGML** | ✅ Definidos | `GGML_TYPE_TURBO2/3/4` agregados a `ggml/include/ggml.h` |
 | **Funciones quant** | ✅ Compiladas | `ggml_quantize_turbo`, `ggml_dequantize_turbo` en `ggml-turboquant.c` |
-| **Cache KV turbo3** | ⚠️ No verificado | Crash al iniciar con `--cache-type-k turbo3` — necesita debug |
-| **Cache KV q4_0** | ✅ Funcionando | Tipo de cache verificado con GPU Vulkan |
+| **Cache KV turbo3** | ✅ Funcionando | Requiere `--flash-attn on` + parche CPU fallback en `llama-kv-cache.cpp` |
+| **Cache KV q4_0** | ✅ Funcionando | Fallback por defecto, full GPU |
 | **GPU Vulkan** | ✅ Activa | AMD RADV REMBRANDT, 35 capas offloaded |
 
-### Configuración verificada funcionando:
+### Configuración verificada funcionando (turbo3):
 ```bash
-# llama-server con GPU + cache q4_0 (funcionando)
 ./llama-server/build-native/llama.cpp/build/bin/llama-server \
-  --model ./models/google_gemma-4-E4B-it-Q4_K_M.gguf \
+  --model ./models/google_gemma-4-26B-A4B-it-IQ2_XXS.gguf \
   --host 0.0.0.0 --port 8080 \
   --ctx-size 4096 --n-gpu-layers 35 \
-  --cache-type-k q4_0 --cache-type-v q4_0
+  --cache-type-k turbo3 --cache-type-v turbo3 \
+  --flash-attn on
 ```
+
+**Nota crítica:** Sin `--flash-attn on`, turbo3 falla con: `quantized V cache was requested, but this requires Flash Attention`.
+
+### Benchmark: turbo3 vs q4_0
+
+Prueba real con equipo bajo carga multitarea (IDE, Firefox, Brave, radeontop, terminal, 32GB RAM):
+
+| Métrica | q4_0 (full GPU) | turbo3 + flash-attn | Diferencia |
+|---------|-----------------|---------------------|------------|
+| **Prompt 21 tok** | 1,020ms (20.6 t/s) | 396ms (53.0 t/s) | **+157%** ⚡ |
+| **Prompt 31 tok** | — | 459ms (67.5 t/s) | — |
+| **Gen 1,466 tok** | 52,084ms (**28.1 t/s**) | — | — |
+| **Gen 1,704 tok** | — | 61,130ms (**27.9 t/s**) | -0.7% |
+| **Gen 2,259 tok** | — | 84,331ms (**26.8 t/s**) | — |
+| **KV Cache** | ~225 MiB (GPU Vulkan) | **220 MiB (CPU)** | -2% |
+| **Estabilidad** | ✅ Estable | ✅ Estable bajo carga | — |
+
+**Conclusiones:**
+- turbo3 da rendimiento prácticamente idéntico a q4_0 (27.9 vs 28.1 t/s)
+- Procesamiento de prompt 2.5x más rápido con turbo3
+- Sistema estable incluso con carga multitarea pesada
+- Ahorro de memoria modesto (~2%) con contexto de 4K; más significativo con contextos largos
 
 ### Dependencias del sistema:
 - `vulkan-headers`, `vulkan-loader-devel`, `glslc`, `curl-devel`
 - Variables Vulkan: `VK_ICD_FILENAMES`, `MESA_VK_WSI=1`
+- Parche aplicado: `src/llama-kv-cache.cpp` — fuerza CPU buffer para tipos TURBO2/3/4
 
 ---
 
@@ -183,7 +206,19 @@ cmake --build build --target llama-server -j$(nproc)
 
 ## 🔧 Troubleshooting TurboQuant
 
-### Crash al iniciar con `--cache-type-k turbo3`
+### turbo3 crash sin `--flash-attn on`
+
+Si ves un error como:
+```
+quantized V cache was requested, but this requires Flash Attention
+```
+
+**Solución**: Agregar `--flash-attn on`:
+```bash
+--cache-type-k turbo3 --cache-type-v turbo3 --flash-attn on
+```
+
+### turbo3 crash con SET_ROWS (antes del parche)
 
 Si ves un error como:
 ```
@@ -191,12 +226,9 @@ pre-allocated tensor (cache_k_l8 (view)) in a buffer (Vulkan0) that cannot run t
 Abortado (`core' generado)
 ```
 
-**Causa**: Las operaciones SET_ROWS no están implementadas para tipos TurboQuant en el buffer Vulkan.
+**Causa**: El backend Vulkan no soporta SET_ROWS para tipos TurboQuant.
 
-**Solución**: Usar `q4_0` como cache type (verificado funcionando):
-```bash
---cache-type-k q4_0 --cache-type-v q4_0
-```
+**Solución**: Parche aplicado en `src/llama-kv-cache.cpp` — fuerza CPU buffer para tipos TURBO2/3/4.
 
 ### Verificar que TurboQuant está compilado
 

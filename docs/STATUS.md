@@ -126,9 +126,8 @@ cd api
 ├── api/
 │   ├── target/release/
 │   │   └── rust_llm_api                      ← Binario API
-│   └── .env                                  ← Config API
 ├── models/
-│   └── google_gemma-4-E4B-it-Q4_K_M.gguf     ← Modelo verificado
+│   └── google_gemma-4-26B-A4B-it-IQ2_XXS.gguf     ← Modelo verificado
 ├── systemd/
 │   ├── llama-server.service
 │   └── llm-api.service
@@ -150,6 +149,16 @@ MESA_VK_WSI=1
 GGML_VK_VISIBLE_DEVICES=0
 ```
 
+### TurboQuant turbo3 — ✅ Funcionando
+Requiere dos cosas:
+1. `--flash-attn on` en la línea de comandos
+2. Parche en `src/llama-kv-cache.cpp` — fuerza CPU buffer para tipos TURBO2/3/4
+
+**Benchmark real** (32GB RAM, carga multitarea):
+- turbo3: 27.9 tok/s, 220 MiB KV cache (CPU)
+- q4_0: 28.1 tok/s, 225 MiB KV cache (GPU Vulkan)
+- Diferencia de rendimiento: <1%, prácticamente idéntico
+
 ### CMake Configuration
 ```bash
 cmake -B build \
@@ -161,8 +170,10 @@ cmake -B build \
   -DBUILD_SHARED_LIBS=OFF
 ```
 
-### TurboQuant Limitation
-Los tipos TURBO2/3/4 están definidos y compilados, pero las funciones de quantización pueden necesitar ajuste para funcionar correctamente con el cache KV. Se usa `q4_0` como fallback funcional.
+### TurboQuant Status
+Los tipos TURBO2/3/4 están compilados y **funcionando** con `--flash-attn on`.
+El parche en `llama-kv-cache.cpp` asigna el KV cache a CPU para evitar el crash de SET_ROWS en Vulkan.
+Rendimiento equivalente a q4_0 con ahorro modesto de memoria.
 
 ---
 
@@ -175,3 +186,5 @@ Los tipos TURBO2/3/4 están definidos y compilados, pero las funciones de quanti
 | 2026-04-05 | ✅ 35 capas offloaded a GPU verificadas |
 | 2026-04-05 | ✅ Parches TurboQuant hechos idempotentes (Python) |
 | 2026-04-05 | ✅ Documentación actualizada |
+| 2026-04-05 | ✅ **TurboQuant turbo3 funcionando** con `--flash-attn on` + parche CPU fallback |
+| 2026-04-05 | ✅ Benchmark: turbo3 27.9 t/s vs q4_0 28.1 t/s (<1% diff) |

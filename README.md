@@ -241,6 +241,7 @@ ps aux | grep "[l]lama-server"
 
 ## 📖 Documentación
 
+- **[API-CONSUME](docs/API-CONSUME.md)** — Cómo consumir la API (curl, Python, JS, Bun, ejemplos)
 - **[NATIVE-DEPLOY](docs/NATIVE-DEPLOY.md)** — Guía completa de despliegue nativo
 - **[TURBOQUANT](docs/TURBOQUANT.md)** — Algoritmo, benchmarks, troubleshooting
 - **[STATUS](docs/STATUS.md)** — Estado actual de componentes
