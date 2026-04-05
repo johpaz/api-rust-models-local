@@ -73,7 +73,7 @@ vulkaninfo --summary | grep -i device
 |---------|-------------|
 | **Máximo rendimiento** | Sin overhead de virtualización |
 | **GPU completa** | Acceso directo a Vulkan sin problemas de contenedores |
-| **Menos memoria** | Sin Docker daemon (~100-200MB ahorrados) |
+| **Menos memoria** | Sin daemon de fondo innecesario |
 | **Boot instantáneo** | Servicios systemd inician en <2s |
 | **Debugging fácil** | Logs directos con `journalctl` |
 | **Auto-start** | systemd maneja reinicios automáticos |
@@ -524,18 +524,6 @@ sudo journalctl -u llama-server -o json | jq .
 # Contar errores
 sudo journalctl -u llama-server -p err --no-pager | wc -l
 ```
-
-## 🆚 Docker vs Nativo
-
-| Característica | Docker | Nativo |
-|----------------|--------|--------|
-| **GPU Access** | Configuración compleja | Directo |
-| **Memory Overhead** | ~100-200MB | ~0MB |
-| **Boot Time** | 10-30s | <2s |
-| **Debugging** | docker logs | journalctl |
-| **Updates** | Rebuild image | Recompile binary |
-| **Isolation** | Alta | Media (systemd) |
-| **Portability** | Alta | Baja |
 
 ## 📚 Recursos
 

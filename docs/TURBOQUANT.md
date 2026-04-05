@@ -107,14 +107,6 @@ Vector KV x ∈ R^d
 
 ## Configuración
 
-### En docker-compose.yml
-
-```yaml
-environment:
-  - LLAMA_ARG_CACHE_TYPE_K=turbo3
-  - LLAMA_ARG_CACHE_TYPE_V=turbo3
-```
-
 ### En .env
 
 ```bash

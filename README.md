@@ -93,7 +93,6 @@ pkill -f "llama-server"
 
 **Ventajas:**
 - ✅ Acceso directo a GPU (Vulkan) - verificado con AMD RADV REMBRANDT
-- ✅ Sin overhead de Docker
 - ✅ Boot instantáneo
 - ✅ Menor uso de memoria
 - ✅ TurboQuant parches compilados (idempotentes)
@@ -271,7 +270,7 @@ Compresión del cache KV con el algoritmo de Google Research:
 
 Ver [`docs/TURBOQUANT.md`](docs/TURBOQUANT.md) para detalles técnicos.
 
-## 🐳 Variables de Entorno
+## 🔧 Variables de Entorno
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|

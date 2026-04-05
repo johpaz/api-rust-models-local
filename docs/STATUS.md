@@ -56,13 +56,17 @@ llama_memory_breakdown_print: |   - Vulkan0 (Graphics (RADV REMBRANDT)) | 20066 
 
 ---
 
-### Build Scripts
+### Scripts
 
 | Script | Estado | Función |
 |--------|--------|---------|
+| `scripts/start-llama-server.sh` | ✅ Funcionando | Inicia llama-server con variables de entorno y .env |
 | `scripts/build-llama-server.sh` | ✅ Funcionando | Compila llama.cpp con Vulkan |
 | `scripts/build-api.sh` | ✅ Funcionando | Compila Rust API en release |
 | `scripts/install-native.sh` | ✅ Listo | Instalación completa + systemd |
+| `scripts/download-model.sh` | ✅ Listo | Descarga modelos GGUF desde HuggingFace |
+| `scripts/health-check.sh` | ✅ Listo | Verifica salud del servidor |
+| `scripts/benchmark.sh` | ✅ Listo | Ejecuta benchmarks de rendimiento |
 
 ---
 
@@ -131,10 +135,21 @@ cd api
 ├── systemd/
 │   ├── llama-server.service
 │   └── llm-api.service
+├── scripts/
+│   ├── start-llama-server.sh                 ← Inicia servidor (lee .env)
+│   ├── build-llama-server.sh                 ← Compila llama.cpp
+│   ├── build-api.sh                          ← Compila Rust API
+│   ├── download-model.sh                     ← Descarga modelos
+│   ├── health-check.sh                       ← Verifica salud
+│   ├── benchmark.sh                          ← Benchmarks
+│   └── install-native.sh                     ← Instalador + systemd
 └── docs/
-    ├── NATIVE-DEPLOY.md                      ← Guía principal
+    ├── NATIVE-DEPLOY.md                      ← Guía despliegue nativo
+    ├── TURBOQUANT.md                         ← TurboQuant algoritmo
     ├── STATUS.md                             ← Este archivo
-    └── DEPLOY.md                             ← Guía Docker
+    ├── API.md                                ← Endpoints API
+    ├── API-CONSUME.md                        ← Cómo consumir API
+    └── MODELS.md                             ← Modelos soportados
 ```
 
 ---

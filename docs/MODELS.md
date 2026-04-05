@@ -39,26 +39,15 @@ Todos los modelos deben estar en formato **GGUF** con cuantización:
 - `IQ2_M`, `IQ3_S` — Máxima compresión
 - `Q8_0` — Máxima calidad
 
-## Uso con Docker
-
-1. Descargar modelo a `models/`
-2. Configurar `.env`:
-   ```bash
-   MODEL_NAME=google_gemma-4-E4B-it-Q4_K_M.gguf
-   ```
-3. Levantar:
-   ```bash
-   docker compose up -d
-   ```
-
 ## Cambio Rápido de Modelo
 
 ```bash
-# Cambiar modelo
-sed -i 's/MODEL_NAME=.*/MODEL_NAME=google_gemma-4-31B-it-Q4_K_M.gguf/' .env
+# Cambiar modelo en .env
+nano .env  # Editar MODEL_NAME
 
-# Reiniciar
-docker compose up -d
+# Reiniciar servidor
+pkill -f "llama-server"
+./scripts/start-llama-server.sh
 ```
 
 ## Modelos Multi-Modales
