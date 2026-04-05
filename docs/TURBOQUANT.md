@@ -112,9 +112,40 @@ turbo2, turbo3, turbo4
 
 | Archivo | Función |
 |---------|---------|
+| `llama-server/patches/apply-turboquant.py` | Script Python idempotente para aplicar parches |
+| `llama-server/patches/apply.sh` | Wrapper bash para ejecutar el script Python |
 | `llama-server/ggml/src/ggml-turboquant.c` | Core: WHT + Lloyd-Max |
 | `llama-server/ggml/src/ggml-turboquant.h` | API pública |
 | `llama-server/ggml/include/ggml.h` | Tipos `GGML_TYPE_TURBO2/3/4` |
+| `llama-server/build-native/llama.cpp/build/bin/llama-server` | Binario compilado con TurboQuant |
+
+### Aplicar Parches
+
+```bash
+# Desde el directorio del proyecto
+bash llama-server/patches/apply.sh
+
+# Es idempotente — seguro ejecutar múltiples veces
+# Output esperado:
+#   ✓ ggml.h already patched (TURBO2 found)
+#   ✓ ggml.c already patched (turboquant include found)
+#   ✓ CMakeLists.txt already patched
+#   ✓ arg.cpp already patched
+```
+
+### Compilar con TurboQuant + Vulkan
+
+```bash
+cd llama-server/build-native/llama.cpp
+cmake -B build \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DLLAMA_BUILD_TESTS=OFF \
+  -DLLAMA_BUILD_EXAMPLES=OFF \
+  -DLLAMA_BUILD_SERVER=ON \
+  -DGGML_VULKAN=ON \
+  -DBUILD_SHARED_LIBS=OFF
+cmake --build build --target llama-server -j$(nproc)
+```
 
 ### Algoritmo
 
@@ -147,3 +178,52 @@ turbo2, turbo3, turbo4
 - **Paper:** https://arxiv.org/abs/2504.19874
 - **Google Blog:** https://research.google/blog/turboquant-redefining-ai-efficiency-with-extreme-compression/
 - **turboquant_plus:** https://github.com/TheTom/turboquant_plus
+
+---
+
+## 🔧 Troubleshooting TurboQuant
+
+### Crash al iniciar con `--cache-type-k turbo3`
+
+Si ves un error como:
+```
+pre-allocated tensor (cache_k_l8 (view)) in a buffer (Vulkan0) that cannot run the operation (SET_ROWS)
+Abortado (`core' generado)
+```
+
+**Causa**: Las operaciones SET_ROWS no están implementadas para tipos TurboQuant en el buffer Vulkan.
+
+**Solución**: Usar `q4_0` como cache type (verificado funcionando):
+```bash
+--cache-type-k q4_0 --cache-type-v q4_0
+```
+
+### Verificar que TurboQuant está compilado
+
+```bash
+# Buscar tipos en el binario
+strings llama-server | grep -i turbo
+# Deberías ver: "turbo2", "turbo3", "turbo4"
+
+# O verificar en logs de cmake
+grep -i "turbo" llama-server/build-native/llama.cpp/build/CMakeCache.txt
+```
+
+### Parches no se aplican
+
+```bash
+# Verificar que el script Python existe
+ls llama-server/patches/apply-turboquant.py
+
+# Ejecutar manualmente desde el directorio de llama.cpp
+cd llama-server/build-native/llama.cpp
+python3 ../../patches/apply-turboquant.py
+```
+
+### GPU no detectada
+
+Asegurar variables de entorno Vulkan:
+```bash
+export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json
+export MESA_VK_WSI=1
+```
