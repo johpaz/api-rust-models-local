@@ -6,6 +6,7 @@ models/*.safetensors
 # Build artifacts
 api/target/
 llama-server/build/
+llama-server/build-native/
 llama-server/*.gguf
 
 # Docker
