@@ -1,0 +1,57 @@
+[Unit]
+Description=llama.cpp Inference Server with Vulkan GPU
+Documentation=file:///opt/llm-api/docs/NATIVE-DEPLOY.md
+After=network.target
+
+[Service]
+Type=simple
+User=llm-api
+Group=llm-api
+
+# Binary and working directory
+ExecStart=/opt/llm-api/bin/llama-server \
+    --model ${MODEL_PATH} \
+    --host 0.0.0.0 \
+    --port 8080 \
+    --ctx-size ${CONTEXT_SIZE:-8192} \
+    --parallel ${MAX_CONCURRENCY:-1} \
+    --n-gpu-layers ${GPU_LAYERS:-35} \
+    --cache-type-k ${CACHE_TYPE_K:-turbo3} \
+    --cache-type-v ${CACHE_TYPE_V:-turbo3} \
+    --log-disable
+
+WorkingDirectory=/opt/llm-api
+
+# Environment variables (loaded from file)
+EnvironmentFile=/etc/llm-api/.env
+
+# Vulkan GPU environment variables
+Environment=VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/intel_icd.x86_64.json:/usr/share/vulkan/icd.d/radeon_icd.x86_64.json
+Environment=MESA_VK_WSI=1
+Environment=GGML_VK_VISIBLE_DEVICES=0
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+MemoryMax=${MODEL_MEMORY_LIMIT:-30G}
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/llm-api/logs
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llama-server
+
+[Install]
+WantedBy=multi-user.target

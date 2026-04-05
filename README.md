@@ -1,8 +1,42 @@
 # 🚀 LLM API Server con TurboQuant
 
-API HTTP multi-modelo con compresión **TurboQuant** para el cache KV, empaquetada en Docker.
+API HTTP multi-modelo con compresión **TurboQuant** para el cache KV.
 
 ## ⚡ Inicio Rápido
+
+### Opción 1: Despliegue Nativo (Recomendado - Máximo Rendimiento)
+
+```bash
+# 1. Configurar
+cp .env.example .env
+
+# 2. Instalar (compila y configura systemd)
+sudo ./scripts/install-native.sh
+
+# 3. Editar configuración
+sudo nano /etc/llm-api/.env
+
+# 4. Descargar modelo
+./scripts/download-model.sh bartowski/google_gemma-4-E4B-it-GGUF \
+    google_gemma-4-E4B-it-Q4_K_M.gguf
+
+# 5. Iniciar servicios
+sudo systemctl start llama-server
+sudo systemctl start llm-api
+
+# 6. Probar
+curl http://localhost:9000/health
+```
+
+**Ventajas:**
+- ✅ Acceso directo a GPU (Vulkan)
+- ✅ Sin overhead de Docker
+- ✅ Boot instantáneo
+- ✅ Menor uso de memoria
+
+Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa.
+
+### Opción 2: Docker (Alternativa)
 
 ```bash
 # 1. Configurar
@@ -33,15 +67,35 @@ curl http://localhost:9000/health
 │   ├── ggml/src/
 │   │   ├── ggml-turboquant.c   ← Core TurboQuant
 │   │   └── ggml-turboquant.h
-│   └── llama-server.Dockerfile
+│   ├── patches/
+│   └── Dockerfile
 ├── models/                 ← Modelos GGUF
 ├── docs/                   ← Documentación
+│   ├── NATIVE-DEPLOY.md    ← Guía despliegue nativo (¡NUEVO!)
+│   └── DEPLOY.md           ← Guía Docker
 ├── scripts/                ← Utilidades
+│   ├── install-native.sh   ← Instalador nativo (¡NUEVO!)
+│   ├── build-api.sh        ← Build API Rust (¡NUEVO!)
+│   └── build-llama-server.sh ← Build llama.cpp (¡NUEVO!)
+├── systemd/                ← Servicios systemd (¡NUEVO!)
+│   ├── llama-server.service
+│   └── llm-api.service
 ├── docker-compose.yml
 └── .env.example
 ```
 
 ## 🔧 Comandos
+
+### Despliegue Nativo
+
+| Comando | Descripción |
+|---------|-------------|
+| `sudo ./scripts/install-native.sh` | Instalar todo |
+| `sudo systemctl start llama-server` | Iniciar inference engine |
+| `sudo systemctl start llm-api` | Iniciar API |
+| `sudo journalctl -u llama-server -f` | Ver logs |
+
+### Docker
 
 | Comando | Descripción |
 |---------|-------------|

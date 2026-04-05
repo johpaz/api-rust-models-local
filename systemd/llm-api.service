@@ -1,0 +1,42 @@
+[Unit]
+Description=LLM API Server (Rust/Axum)
+Documentation=file:///opt/llm-api/docs/NATIVE-DEPLOY.md
+After=network.target llama-server.service
+Requires=llama-server.service
+
+[Service]
+Type=simple
+User=llm-api
+Group=llm-api
+
+# Binary and working directory
+ExecStart=/opt/llm-api/bin/rust_llm_api
+WorkingDirectory=/opt/llm-api
+
+# Environment variables (loaded from file)
+EnvironmentFile=/etc/llm-api/.env
+
+# Restart policy
+Restart=always
+RestartSec=3
+StartLimitInterval=60
+StartLimitBurst=3
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=512M
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/llm-api/logs
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-api
+
+[Install]
+WantedBy=multi-user.target
