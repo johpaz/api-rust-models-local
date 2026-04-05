@@ -1,4 +1,4 @@
-# llama-server con TurboQuant integrado
+# llama-server con TurboQuant + Vulkan GPU integrado
 # Descarga llama.cpp + aplica parches TurboQuant durante el build
 
 FROM debian:bookworm AS builder
@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     git \
     patch \
+    libvulkan-dev \
+    vulkan-validationlayers \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
@@ -19,12 +21,13 @@ RUN git clone --depth 1 https://github.com/ggerganov/llama.cpp .
 COPY patches/ /src/patches/
 RUN /src/patches/apply.sh
 
-# 3. Build con optimizaciones CPU
+# 3. Build con optimizaciones CPU + Vulkan GPU
 RUN cmake -B build \
     -DCMAKE_BUILD_TYPE=Release \
     -DLLAMA_BUILD_TESTS=OFF \
     -DLLAMA_BUILD_EXAMPLES=OFF \
     -DLLAMA_BUILD_SERVER=ON \
+    -DLLAMA_VULKAN=ON \
     -DLLAMA_AVX=ON \
     -DLLAMA_AVX2=ON \
     -DLLAMA_AVX512=ON \
@@ -39,6 +42,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y \
     libgomp1 \
     curl \
+    libvulkan1 \
+    mesa-vulkan-drivers \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /src/build/bin/llama-server /usr/local/bin/llama-server
