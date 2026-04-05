@@ -2,6 +2,67 @@
 
 Guía para desplegar el LLM API Server como **binarios nativos** con servicios systemd, sin Docker.
 
+## ✅ Estado Actual (Verificado Abril 2026)
+
+### Componentes funcionando:
+
+| Componente | Estado | Ubicación | Puerto |
+|-----------|--------|-----------|--------|
+| **llama-server** | ✅ Funcionando | `llama-server/build-native/llama.cpp/build/bin/llama-server` | 8080 |
+| **GPU Vulkan** | ✅ Detectada | AMD RADV REMBRANDT (Rembrandt iGPU) | - |
+| **TurboQuant** | ✅ Compilado | Parches idempotentes aplicados | - |
+| **Rust API** | ⚠️ Compilado | `api/target/release/rust_llm_api` | - |
+
+### Configuración verificada:
+- **Modelo**: `google_gemma-4-E4B-it-Q4_K_M.gguf` (5.1GB)
+- **GPU Layers**: 35 capas offloaded a GPU
+- **Cache KV**: q4_0 (4-bit)
+- **Context Size**: 4096 tokens
+- **Health**: `{"status":"ok"}` en `http://localhost:8080/health`
+
+### Comandos para iniciar (funcionando):
+
+```bash
+# Iniciar llama-server con GPU Vulkan
+cd "/home/johnpaez/Documentos/llm/api rust model local"
+setsid env \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
+  MESA_VK_WSI=1 \
+  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
+  --model "./models/google_gemma-4-E4B-it-Q4_K_M.gguf" \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 4096 --n-gpu-layers 35 \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  > /tmp/llama.log 2>&1 &
+disown
+
+# Verificar (esperar ~20s para carga del modelo)
+sleep 20 && curl -s http://localhost:8080/health
+# Respuesta esperada: {"status":"ok"}
+```
+
+### Verificar GPU activa:
+```bash
+# En logs de llama-server:
+grep -E "vulkan|GPU|offload" /tmp/llama.log
+# Deberías ver:
+# "offloading 34 repeating layers to GPU"
+# "offloaded 35/43 layers to GPU"
+
+# Verificar Vulkan:
+vulkaninfo --summary | grep -i device
+```
+
+### Dependencias instaladas (Fedora):
+- `rustc 1.94.1` / `cargo 1.94.1`
+- `cmake 3.31.11`
+- `glslc` (shaderc v2026.1)
+- `vulkan-headers`, `vulkan-loader-devel`
+- `curl-devel`
+- `mesa-vulkan-drivers`
+
+---
+
 ## ¿Por qué nativo?
 
 | Ventaja | Descripción |

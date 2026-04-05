@@ -4,6 +4,35 @@ Basado en el paper de Google Research:
 > **"TurboQuant: Online Vector Quantization with Near-optimal Distortion Rate"**
 > arXiv:2504.19874
 
+---
+
+## ✅ Estado Actual (Abril 2026)
+
+| Componente | Estado | Notas |
+|-----------|--------|-------|
+| **Parches** | ✅ Idempotentes | Script Python (`apply-turboquant.py`) — seguro ejecutar múltiples veces |
+| **Tipos GGML** | ✅ Definidos | `GGML_TYPE_TURBO2/3/4` agregados a `ggml/include/ggml.h` |
+| **Funciones quant** | ✅ Compiladas | `ggml_quantize_turbo`, `ggml_dequantize_turbo` en `ggml-turboquant.c` |
+| **Cache KV turbo3** | ⚠️ No verificado | Crash al iniciar con `--cache-type-k turbo3` — necesita debug |
+| **Cache KV q4_0** | ✅ Funcionando | Tipo de cache verificado con GPU Vulkan |
+| **GPU Vulkan** | ✅ Activa | AMD RADV REMBRANDT, 35 capas offloaded |
+
+### Configuración verificada funcionando:
+```bash
+# llama-server con GPU + cache q4_0 (funcionando)
+./llama-server/build-native/llama.cpp/build/bin/llama-server \
+  --model ./models/google_gemma-4-E4B-it-Q4_K_M.gguf \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 4096 --n-gpu-layers 35 \
+  --cache-type-k q4_0 --cache-type-v q4_0
+```
+
+### Dependencias del sistema:
+- `vulkan-headers`, `vulkan-loader-devel`, `glslc`, `curl-devel`
+- Variables Vulkan: `VK_ICD_FILENAMES`, `MESA_VK_WSI=1`
+
+---
+
 ## ¿Qué es?
 
 TurboQuant es un algoritmo que **comprime el cache KV** durante la inferencia del LLM,

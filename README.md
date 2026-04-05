@@ -6,35 +6,45 @@ API HTTP multi-modelo con compresión **TurboQuant** para el cache KV.
 
 ### Opción 1: Despliegue Nativo (Recomendado - Máximo Rendimiento)
 
+**Estado**: ✅ Verificado funcionando con GPU Vulkan (Abril 2026)
+
 ```bash
-# 1. Configurar
-cp .env.example .env
+# 1. Iniciar llama-server directamente (puerto 8080)
+cd "/api rust model local"
 
-# 2. Instalar (compila y configura systemd)
-sudo ./scripts/install-native.sh
+setsid env \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
+  MESA_VK_WSI=1 \
+  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
+  --model "./models/google_gemma-4-E4B-it-Q4_K_M.gguf" \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 4096 --n-gpu-layers 35 \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  > /tmp/llama.log 2>&1 &
+disown
 
-# 3. Editar configuración
-sudo nano /etc/llm-api/.env
+# 2. Esperar carga del modelo (~20s)
+sleep 20
 
-# 4. Descargar modelo
-./scripts/download-model.sh bartowski/google_gemma-4-E4B-it-GGUF \
-    google_gemma-4-E4B-it-Q4_K_M.gguf
+# 3. Verificar
+curl http://localhost:8080/health
+# Respuesta: {"status":"ok"}
+```
 
-# 5. Iniciar servicios
-sudo systemctl start llama-server
-sudo systemctl start llm-api
-
-# 6. Probar
-curl http://localhost:9000/health
+**Verificar GPU activa:**
+```bash
+grep -i "offload" /tmp/llama.log
+# Deberías ver: "offloaded 35/43 layers to GPU"
 ```
 
 **Ventajas:**
-- ✅ Acceso directo a GPU (Vulkan)
+- ✅ Acceso directo a GPU (Vulkan) - verificado con AMD RADV REMBRANDT
 - ✅ Sin overhead de Docker
 - ✅ Boot instantáneo
 - ✅ Menor uso de memoria
+- ✅ TurboQuant parches compilados (idempotentes)
 
-Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa.
+Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa y systemd.
 
 ### Opción 2: Docker (Alternativa)
 
@@ -62,13 +72,11 @@ curl http://localhost:9000/health
 ├── api/                    ← API Rust (Axum)
 │   ├── src/
 │   ├── Cargo.toml
-│   └── Dockerfile
 ├── llama-server/           ← llama.cpp + TurboQuant
 │   ├── ggml/src/
 │   │   ├── ggml-turboquant.c   ← Core TurboQuant
 │   │   └── ggml-turboquant.h
 │   ├── patches/
-│   └── Dockerfile
 ├── models/                 ← Modelos GGUF
 ├── docs/                   ← Documentación
 │   ├── NATIVE-DEPLOY.md    ← Guía despliegue nativo (¡NUEVO!)
@@ -80,7 +88,6 @@ curl http://localhost:9000/health
 ├── systemd/                ← Servicios systemd (¡NUEVO!)
 │   ├── llama-server.service
 │   └── llm-api.service
-├── docker-compose.yml
 └── .env.example
 ```
 
