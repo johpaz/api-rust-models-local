@@ -99,24 +99,97 @@ grep -i "offload" /tmp/llama.log
 
 Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa y systemd.
 
-### Opción 2: Docker (Alternativa)
+---
+
+## 🔧 Gestión del Servicio
+
+### Comandos Básicos
+
+| Acción | Comando |
+|--------|---------|
+| **Detener** | `pkill -f "llama-server"` |
+| **Ver logs** | `tail -f /tmp/llama.log` |
+| **Verificar estado** | `curl http://localhost:8080/health` |
+| **Verificar GPU** | `grep -i "offload" /tmp/llama.log` |
+
+### 🔄 Cambiar de Modelo
 
 ```bash
-# 1. Configurar
-cp .env.example .env
+# 1. Detener servidor actual
+pkill -f "llama-server"
+sleep 2
 
-# 2. Descargar modelo
+# 2. Iniciar con otro modelo
+setsid env \
+  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
+  MESA_VK_WSI=1 \
+  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
+  --model "./models/google_gemma-4-26B-A4B-it-IQ2_XXS.gguf" \
+  --host 0.0.0.0 --port 8080 \
+  --ctx-size 4096 --n-gpu-layers 35 \
+  --cache-type-k q4_0 --cache-type-v q4_0 \
+  > /tmp/llama.log 2>&1 &
+disown
+
+# 3. Esperar carga y verificar
+sleep 20 && curl http://localhost:8080/health
+```
+
+### 📊 Modelos Disponibles
+
+| Modelo | Params | Tamaño | Comando `--model` |
+|--------|--------|--------|-------------------|
+| **Gemma 4 E4B** ⭐ | 7.5B | 5.1 GB | `./models/google_gemma-4-E4B-it-Q4_K_M.gguf` |
+| Gemma 4 31B | 30.7B | 19 GB | `./models/google_gemma-4-31B-it-Q4_K_M.gguf` |
+| Nemotron Cascade 2 | 30B | 17 GB | `./models/nvidia_Nemotron-Cascade-2-30B-A3B-IQ2_M.gguf` |
+| Qwen 3.5 35B | 35B | 20 GB | `./models/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf` |
+
+### 📝 Logs y Debugging
+
+```bash
+# Logs en tiempo real
+tail -f /tmp/llama.log
+
+# Verificar GPU activa
+grep -iE "vulkan|gpu|offload" /tmp/llama.log
+# Esperado: "offloaded 35/43 layers to GPU"
+
+# Ver uso de memoria VRAM
+grep "memory breakdown" /tmp/llama.log
+# Esperado: "Vulkan0 (Graphics (RADV REMBRANDT)) | 20066 = ..."
+
+# Ver errores
+grep -iE "error|fail|abort" /tmp/llama.log
+
+# Ver proceso corriendo
+ps aux | grep "[l]lama-server"
+```
+
+### ⚙️ Ajustar Capas GPU
+
+| Situación | Valor | Comando |
+|-----------|-------|---------|
+| **Normal** (7.5B) | 35 capas | `--n-gpu-layers 35` |
+| **Poca VRAM** | 20 capas | `--n-gpu-layers 20` |
+| **Máxima GPU** (12GB+) | 999 capas | `--n-gpu-layers 999` |
+| **Solo CPU** | 0 capas | `--n-gpu-layers 0` |
+
+### ⚙️ Ajustar Contexto
+
+| Valor | Uso RAM | Cuándo usar |
+|-------|---------|-------------|
+| `--ctx-size 2048` | Menor | Conversaciones cortas, poca RAM |
+| `--ctx-size 4096` | Medio | **Default recomendado** |
+| `--ctx-size 8192` | Mayor | Documentos largos, más RAM disponible |
+
+### 📥 Descargar Nuevo Modelo
+
+```bash
+./scripts/download-model.sh <repo_id> <filename>
+
+# Ejemplo:
 ./scripts/download-model.sh bartowski/google_gemma-4-E4B-it-GGUF \
     google_gemma-4-E4B-it-Q4_K_M.gguf
-
-# 3. Configurar modelo en .env
-echo "MODEL_NAME=google_gemma-4-E4B-it-Q4_K_M.gguf" >> .env
-
-# 4. Levantar
-docker compose up -d --build
-
-# 5. Probar
-curl http://localhost:9000/health
 ```
 
 ## 📁 Estructura
@@ -132,13 +205,14 @@ curl http://localhost:9000/health
 │   ├── patches/
 ├── models/                 ← Modelos GGUF
 ├── docs/                   ← Documentación
-│   ├── NATIVE-DEPLOY.md    ← Guía despliegue nativo (¡NUEVO!)
-│   └── DEPLOY.md           ← Guía Docker
+│   ├── NATIVE-DEPLOY.md    ← Guía despliegue nativo
+│   ├── TURBOQUANT.md       ← TurboQuant algoritmo
+│   └── STATUS.md           ← Estado de componentes
 ├── scripts/                ← Utilidades
-│   ├── install-native.sh   ← Instalador nativo (¡NUEVO!)
-│   ├── build-api.sh        ← Build API Rust (¡NUEVO!)
-│   └── build-llama-server.sh ← Build llama.cpp (¡NUEVO!)
-├── systemd/                ← Servicios systemd (¡NUEVO!)
+│   ├── install-native.sh   ← Instalador nativo
+│   ├── build-api.sh        ← Build API Rust
+│   └── build-llama-server.sh ← Build llama.cpp
+├── systemd/                ← Servicios systemd
 │   ├── llama-server.service
 │   └── llm-api.service
 └── .env.example
@@ -146,23 +220,14 @@ curl http://localhost:9000/health
 
 ## 🔧 Comandos
 
-### Despliegue Nativo
-
 | Comando | Descripción |
 |---------|-------------|
-| `sudo ./scripts/install-native.sh` | Instalar todo |
-| `sudo systemctl start llama-server` | Iniciar inference engine |
-| `sudo systemctl start llm-api` | Iniciar API |
-| `sudo journalctl -u llama-server -f` | Ver logs |
-
-### Docker
-
-| Comando | Descripción |
-|---------|-------------|
-| `docker compose up -d --build` | Levantar todo |
-| `docker compose down` | Detener |
-| `./scripts/download-model.sh <repo> <file>` | Descargar modelo |
-| `./scripts/health-check.sh` | Verificar servicios |
+| `pkill -f "llama-server"` | Detener servidor |
+| `tail -f /tmp/llama.log` | Ver logs en tiempo real |
+| `curl http://localhost:8080/health` | Verificar estado |
+| `grep -i "offload" /tmp/llama.log` | Verificar GPU activa |
+| `sudo ./scripts/install-native.sh` | Instalación completa + systemd |
+| `sudo journalctl -u llama-server -f` | Ver logs systemd (si instalado) |
 
 ## 📡 API Endpoints
 
@@ -176,10 +241,11 @@ curl http://localhost:9000/health
 
 ## 📖 Documentación
 
-- **[API Completa](docs/API.md)** — Endpoints, ejemplos curl/Python/Node
-- **[Deploy](docs/DEPLOY.md)** — Docker, variables, troubleshooting
-- **[TurboQuant](docs/TURBOQUANT.md)** — Algoritmo, benchmarks
-- **[Modelos](docs/MODELS.md)** — Modelos soportados y descargas
+- **[NATIVE-DEPLOY](docs/NATIVE-DEPLOY.md)** — Guía completa de despliegue nativo
+- **[TURBOQUANT](docs/TURBOQUANT.md)** — Algoritmo, benchmarks, troubleshooting
+- **[STATUS](docs/STATUS.md)** — Estado actual de componentes
+- **[API](docs/API.md)** — Endpoints, ejemplos
+- **[MODELS](docs/MODELS.md)** — Modelos soportados y descargas
 
 ## 🧠 Modelos Soportados
 
