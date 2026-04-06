@@ -3,6 +3,8 @@
 # Iniciar llama-server leyendo configuración desde .env
 # ═══════════════════════════════════════════════════════
 #
+# LLM API Server - Developed by @johpaz
+#
 # Uso:
 #   ./scripts/start-llama-server.sh
 #
@@ -11,9 +13,37 @@
 
 set -e
 
+# ═══════════════════════════════════════════════════════
+# Configuración de la aplicación
+# ═══════════════════════════════════════════════════════
+APP_NAME="LLM API Server"
+APP_VERSION="1.0.0"
+APP_AUTHOR="@johpaz"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 ENV_FILE="$PROJECT_ROOT/.env"
+
+# ═══════════════════════════════════════════════════════
+# Banner de inicio
+# ═══════════════════════════════════════════════════════
+echo ""
+echo "┌─────────────────────────────────────────────────────────┐"
+echo "│                                                         │"
+echo "│   ██╗     ███████╗ █████╗ ██████╗                       │"
+echo "│   ██║     ██╔════╝██╔══██╗██╔══██╗                      │"
+echo "│   ██║     █████╗  ███████║██████╔╝                      │"
+echo "│   ██║     ██╔══╝  ██╔══██║██╔══██╗                      │"
+echo "│   ███████╗███████╗██║  ██║██║  ██║                      │"
+echo "│   ╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═╝                      │"
+echo "│                                                         │"
+echo "│               S  E  R  V  E  R                          │"
+echo "│                                                         │"
+echo "│         Version: ${APP_VERSION}                         │"
+echo "│         Author:  ${APP_AUTHOR}                          │"
+echo "│                                                         │"
+echo "└─────────────────────────────────────────────────────────┘"
+echo ""
 
 # ═══════════════════════════════════════════════════════
 # Cargar variables de entorno desde .env
@@ -40,7 +70,6 @@ CONTEXT_SIZE="${CONTEXT_SIZE:-4096}"
 GPU_LAYERS="${GPU_LAYERS:-35}"
 CACHE_TYPE_K="${LLAMA_ARG_CACHE_TYPE_K:-q4_0}"
 CACHE_TYPE_V="${LLAMA_ARG_CACHE_TYPE_V:-q4_0}"
-N_PARALLEL="${MAX_CONCURRENCY:-1}"
 
 # Ruta del binario compilado
 LLAMA_BINARY="$PROJECT_ROOT/llama-server/build-native/llama.cpp/build/bin/llama-server"
@@ -81,21 +110,19 @@ if [ ! -f "$MODEL_PATH" ]; then
     exit 1
 fi
 
-# Verificar si ya hay un proceso corriendo
-if pgrep -f "llama-server" > /dev/null 2>&1; then
-    echo "⚠️  Ya hay un proceso llama-server corriendo"
-    echo "PID: $(pgrep -f 'llama-server' | head -1)"
-    echo ""
-    read -p "¿Quieres detenerlo y reiniciar? (y/N) " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Yy]$ ]]; then
-        pkill -f "llama-server"
-        sleep 2
-        echo "✅ Proceso anterior detenido"
-    else
-        echo "Cancelado"
-        exit 0
+# Detener proceso anterior si existe
+EXISTING_PID=$(pgrep -f "build/bin/llama-server" 2>/dev/null | head -1)
+if [ -n "$EXISTING_PID" ]; then
+    echo "⚠️  Deteniendo proceso anterior (PID: $EXISTING_PID)..."
+    kill "$EXISTING_PID" 2>/dev/null
+    sleep 2
+    # Verificar que se detuvo
+    if kill -0 "$EXISTING_PID" 2>/dev/null; then
+        kill -9 "$EXISTING_PID" 2>/dev/null
+        sleep 1
     fi
+    echo "✅ Proceso anterior detenido"
+    echo ""
 fi
 
 # ═══════════════════════════════════════════════════════
@@ -108,6 +135,7 @@ export MESA_VK_WSI="${MESA_VK_WSI:-1}"
 # Mostrar configuración
 # ═══════════════════════════════════════════════════════
 echo "📊 Configuración:"
+echo "   Proyecto:      LLM API Server (@johpaz)"
 echo "   Modelo:        $MODEL_NAME"
 echo "   Modelo path:   $MODEL_PATH"
 echo "   Host:          $HOST"
@@ -116,12 +144,11 @@ echo "   Contexto:      $CONTEXT_SIZE tokens"
 echo "   GPU Layers:    $GPU_LAYERS"
 echo "   Cache K:       $CACHE_TYPE_K"
 echo "   Cache V:       $CACHE_TYPE_V"
-echo "   Paralelo:      $N_PARALLEL"
 echo "   Modelo size:   $(du -h "$MODEL_PATH" | cut -f1)"
 echo ""
 
 # ═══════════════════════════════════════════════════════
-# Construir comando
+# Construir comando con array (maneja espacios en rutas)
 # ═══════════════════════════════════════════════════════
 ARGS=(
     "--model" "$MODEL_PATH"
@@ -131,7 +158,6 @@ ARGS=(
     "--n-gpu-layers" "$GPU_LAYERS"
     "--cache-type-k" "$CACHE_TYPE_K"
     "--cache-type-v" "$CACHE_TYPE_V"
-    "--n-parallel" "$N_PARALLEL"
 )
 
 # Agregar flash-attn si usa turboquant (turbo2/3/4)
@@ -153,33 +179,13 @@ echo "   Health: curl http://localhost:$PORT/health"
 echo ""
 
 cd "$PROJECT_ROOT"
-setsid env \
-    VK_ICD_FILENAMES="$VK_ICD_FILENAMES" \
-    MESA_VK_WSI="$MESA_VK_WSI" \
-    "$LLAMA_BINARY" "${ARGS[@]}" > "$LOG_FILE" 2>&1 &
 
+env VK_ICD_FILENAMES="$VK_ICD_FILENAMES" MESA_VK_WSI="$MESA_VK_WSI" \
+  "$LLAMA_BINARY" "${ARGS[@]}" > "$LOG_FILE" 2>&1 &
 LLAMA_PID=$!
-disown $LLAMA_PID
+disown
 
 echo "✅ llama-server iniciado (PID: $LLAMA_PID)"
 echo ""
-echo "⏳ Esperando carga del modelo (~20-30s)..."
-
-# Esperar y verificar
-for i in $(seq 1 30); do
-    sleep 1
-    if curl -sf "http://localhost:$PORT/health" > /dev/null 2>&1; then
-        echo ""
-        echo "✅ Servidor listo!"
-        curl -s "http://localhost:$PORT/health" | python3 -m json.tool 2>/dev/null || curl -s "http://localhost:$PORT/health"
-        echo ""
-        echo "📋 Para ver GPU activa:"
-        echo "   grep -i 'offload' $LOG_FILE"
-        exit 0
-    fi
-done
-
-echo ""
-echo "⚠️  El servidor no respondió en 30s"
-echo "Verifica los logs:"
-echo "   tail -f $LOG_FILE"
+echo "⏳ Cargando modelo... espera ~30-60s"
+echo "   Verifica con: curl http://localhost:$PORT/health"
