@@ -237,18 +237,46 @@ ps aux | grep "[l]lama-server"
 | Endpoint | Método | Descripción |
 |----------|--------|-------------|
 | `/health` | GET | Estado del sistema |
-| `/v1/models` | GET | Modelos disponibles |
-| `/v1/chat/completions` | POST | Generar texto (SSE) |
-| `/v1/images/generations` | POST | Generar imágenes |
-| `/v1/audio/transcriptions` | POST | Transcribir audio |
+| `/v1/models` | GET | **Lista todos los modelos disponibles** ✨ |
+| `/v1/chat/completions` | POST | Generar texto (SSE) - **soporta selección de modelo** |
+| `/v1/images/generations` | POST | Generar imágenes - **selección de modelo** |
+| `/v1/audio/speech` | POST | Text-to-Speech - **selección de modelo** |
+| `/v1/audio/transcriptions` | POST | Transcribir audio (Whisper) - **selección de modelo** |
+
+### ✨ Multi-Model Selection
+
+La API ahora permite **seleccionar entre múltiples modelos** disponibles:
+
+```bash
+# 1. Ver modelos disponibles
+curl http://localhost:9000/v1/models -H "Authorization: Bearer $API_TOKEN"
+
+# 2. Usar un modelo específico para chat
+curl http://localhost:9000/v1/chat/completions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{
+    "model": "google_gemma-4-E4B-it-Q4_K_M.gguf",
+    "messages": [{"role": "user", "content": "Hola!"}]
+  }'
+
+# 3. Transcribir audio con Whisper
+curl http://localhost:9000/v1/audio/transcriptions \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -F "file=@audio.mp3" \
+  -F "model=whisper-large-v3-turbo.gguf" \
+  -F "language=es"
+```
+
+Ver [docs/MULTI-MODEL.md](docs/MULTI-MODEL.md) para guía completa.
 
 ## 📖 Documentación
 
 - **[API-CONSUME](docs/API-CONSUME.md)** — Cómo consumir la API (curl, Python, JS, Bun, ejemplos)
+- **[API](docs/API.md)** — Endpoints, parámetros y ejemplos detallados
+- **[MULTI-MODEL](docs/MULTI-MODEL.md)** — ✨ Guía de selección de modelos
 - **[NATIVE-DEPLOY](docs/NATIVE-DEPLOY.md)** — Guía completa de despliegue nativo
 - **[TURBOQUANT](docs/TURBOQUANT.md)** — Algoritmo, benchmarks, troubleshooting
 - **[STATUS](docs/STATUS.md)** — Estado actual de componentes
-- **[API](docs/API.md)** — Endpoints, ejemplos
 - **[MODELS](docs/MODELS.md)** — Modelos soportados y descargas
 
 ## 🧠 Modelos Soportados

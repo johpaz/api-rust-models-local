@@ -4,11 +4,13 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
+use tokio::sync::Mutex;
 use tracing::error;
 
 pub struct LlamaEngine {
     client: Client,
     server_url: String,
+    current_model: Mutex<String>,
 }
 
 #[derive(Serialize)]
@@ -18,6 +20,7 @@ struct CompletionRequest {
     n_predict: i32,
     stop: Vec<String>,
     stream: bool,
+    model: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -26,11 +29,23 @@ struct CompletionChunk {
     stop: bool,
 }
 
+#[derive(Deserialize, Debug)]
+struct LlamaModelInfo {
+    name: String,
+    model: String,
+}
+
+#[derive(Deserialize, Debug)]
+struct LlamaModelsResponse {
+    models: Vec<LlamaModelInfo>,
+}
+
 impl LlamaEngine {
     pub async fn new(config: Config) -> Result<Self, AppError> {
         let client = Client::new();
         let server_url = config.llama_server_url.clone();
 
+        // Check if llama-server is running
         client
             .get(format!("{}/health", server_url))
             .send()
@@ -40,12 +55,95 @@ impl LlamaEngine {
                 server_url, e
             )))?;
 
+        // Get the current model from llama-server
+        let current_model = Self::fetch_current_model(&client, &server_url).await?;
+
         tracing::info!("Connected to llama-server at {}", server_url);
-        Ok(Self { client, server_url })
+        tracing::info!("Current model: {}", current_model);
+        
+        Ok(Self { 
+            client, 
+            server_url,
+            current_model: Mutex::new(current_model),
+        })
     }
 
-    pub fn get_model_name(&self) -> String {
-        "local-gguf-model".to_string()
+    async fn fetch_current_model(client: &Client, server_url: &str) -> Result<String, AppError> {
+        // Try the /v1/models endpoint first
+        if let Ok(response) = client
+            .get(format!("{}/v1/models", server_url))
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                if let Ok(models_resp) = response.json::<LlamaModelsResponse>().await {
+                    if let Some(model) = models_resp.models.first() {
+                        return Ok(model.name.clone());
+                    }
+                }
+            }
+        }
+
+        // Fallback to /props endpoint
+        if let Ok(response) = client
+            .get(format!("{}/props", server_url))
+            .send()
+            .await
+        {
+            if response.status().is_success() {
+                if let Ok(json) = response.json::<serde_json::Value>().await {
+                    if let Some(model_path) = json.get("model_path").and_then(|v| v.as_str()) {
+                        // Extract just the filename from the path
+                        if let Some(filename) = model_path.split('/').last() {
+                            return Ok(filename.to_string());
+                        }
+                        return Ok(model_path.to_string());
+                    }
+                }
+            }
+        }
+
+        // Default fallback
+        Ok("unknown-model".to_string())
+    }
+
+    pub async fn get_model_name(&self) -> String {
+        self.current_model.lock().await.clone()
+    }
+
+    pub async fn switch_model(&self, model_name: String) -> Result<(), AppError> {
+        // Check if llama-server supports model switching via /v1/models API
+        // First, try to load the model
+        let load_response = self.client
+            .post(format!("{}/v1/models", self.server_url))
+            .json(&serde_json::json!({
+                "model": model_name
+            }))
+            .send()
+            .await;
+
+        match load_response {
+            Ok(resp) if resp.status().is_success() => {
+                tracing::info!("Successfully switched to model: {}", model_name);
+                let mut model = self.current_model.lock().await;
+                *model = model_name;
+                Ok(())
+            }
+            Ok(resp) => {
+                let status = resp.status();
+                tracing::warn!("Model switching via API returned status: {}", status);
+                // If API doesn't support model switching, we'll still allow the request
+                // but note that the model parameter will be passed per-request
+                Ok(())
+            }
+            Err(e) => {
+                tracing::error!("Failed to switch model: {}", e);
+                Err(AppError::ModelLoadError(format!(
+                    "Failed to switch model: {}",
+                    e
+                )))
+            }
+        }
     }
 
     pub async fn generate_stream(
@@ -54,8 +152,15 @@ impl LlamaEngine {
         temperature: f32,
         max_tokens: usize,
         stop: Vec<String>,
+        model: Option<String>,
     ) -> Result<mpsc::Receiver<String>, AppError> {
         let (tx, rx) = mpsc::channel(100);
+
+        // Use the specified model, or fall back to current model
+        let model_to_use = match model {
+            Some(m) => m,
+            None => self.get_model_name().await,
+        };
 
         let response = self
             .client
@@ -66,6 +171,7 @@ impl LlamaEngine {
                 n_predict: max_tokens as i32,
                 stop,
                 stream: true,
+                model: Some(model_to_use.clone()),
             })
             .send()
             .await

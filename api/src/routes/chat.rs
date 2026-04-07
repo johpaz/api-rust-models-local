@@ -86,27 +86,44 @@ pub async fn chat_completions(
     Json(payload): Json<ChatCompletionRequest>,
 ) -> Result<Sse<impl Stream<Item = Result<Event, Infallible>>>, AppError> {
     let prompt = payload.messages.last().map(|m| m.content.clone()).unwrap_or_default();
-    
+
     // Validation
     if prompt.len() > 10000 {
         return Err(AppError::InvalidRequest("Prompt too long".to_string()));
     }
-    
+
     let temperature = payload.temperature.unwrap_or(state.config.default_temperature);
     if temperature < 0.0 || temperature > 2.0 {
         return Err(AppError::InvalidRequest("Temperature must be between 0 and 2".to_string()));
     }
-    
+
     let max_tokens = payload.max_tokens.unwrap_or(1024);
     if max_tokens > 4096 {
         return Err(AppError::InvalidRequest("Max tokens cannot exceed 4096".to_string()));
     }
-    
+
     let stop = payload.stop.unwrap_or_default();
 
-    let mut rx = state.engine.generate_stream(prompt, temperature, max_tokens, stop).await?;
+    // Validate model if specified
+    let model_to_use = if !payload.model.is_empty() && payload.model != "local-gguf-model" {
+        // Check if the requested model exists
+        match state.find_model_by_name(&payload.model) {
+            Some(model_info) => {
+                tracing::info!("Using requested model: {}", model_info.name);
+                Some(model_info.name)
+            }
+            None => {
+                tracing::warn!("Requested model '{}' not found, using default", payload.model);
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut rx = state.engine.generate_stream(prompt, temperature, max_tokens, stop, model_to_use).await?;
     let id = Uuid::new_v4().to_string();
-    let model_name = state.engine.get_model_name();
+    let model_name = state.engine.get_model_name().await;
 
     let stream = async_stream::stream! {
         yield Ok(Event::default().data(serde_json::to_string(&ChatCompletionChunk {
