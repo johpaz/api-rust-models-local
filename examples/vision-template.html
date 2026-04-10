@@ -587,12 +587,12 @@
             <div class="sidebar-section">
                 <h3>Conexión</h3>
                 <div class="form-group">
-                    <label>API URL:</label>
-                    <input type="text" id="apiUrl" value="http://localhost:9000">
+                    <label>llama-server URL:</label>
+                    <input type="text" id="llamaUrl" value="http://localhost:8080">
                 </div>
                 <div class="form-group">
-                    <label>API Token:</label>
-                    <input type="password" id="apiToken" value="tu-token-aqui">
+                    <label>Modelos:</label>
+                    <input type="text" id="modelsUrl" value="models.json">
                 </div>
             </div>
 
@@ -624,13 +624,7 @@
                     <select id="analysisMode">
                         <option value="single">Imagen Individual</option>
                         <option value="batch">Múltiples Imágenes (Batch)</option>
-                        <option value="continuous">Continuo (Cámara)</option>
-                        <option value="websocket">WebSocket (Tiempo Real)</option>
                     </select>
-                </div>
-                <div class="form-group">
-                    <label>Intervalo (seg):</label>
-                    <input type="number" id="interval" value="5" min="2" max="60">
                 </div>
             </div>
 
@@ -780,22 +774,18 @@
         const ctx = canvas.getContext('2d');
         const modelSelect = document.getElementById('modelSelect');
         const modelStatus = document.getElementById('modelStatus');
+        let currentActiveModel = null;
 
-        // Load available models from API
+        // Load available models from models.json (local file)
         async function loadModels() {
             try {
-                const apiUrl = document.getElementById('apiUrl').value;
-                const apiToken = document.getElementById('apiToken').value;
+                const modelsUrl = document.getElementById('modelsUrl').value;
 
-                const response = await fetch(`${apiUrl}/v1/models`, {
-                    headers: {
-                        'Authorization': `Bearer ${apiToken}`
-                    }
-                });
+                const response = await fetch(modelsUrl);
 
                 if (response.ok) {
                     const data = await response.json();
-                    const models = data.data || [];
+                    const models = data.models || [];
 
                     modelSelect.innerHTML = '';
 
@@ -806,24 +796,16 @@
                         return;
                     }
 
-                    // Add each model to the select
                     models.forEach((model, index) => {
                         const option = document.createElement('option');
                         option.value = model.id;
-                        // Format size in human readable format
-                        let sizeText = '';
-                        if (model.size_bytes) {
-                            const gb = model.size_bytes / (1024 * 1024 * 1024);
-                            sizeText = ` (${gb.toFixed(1)} GB)`;
-                        }
-                        option.textContent = `${model.name}${sizeText}`;
-                        // Select first model by default
+                        option.textContent = `${model.name} (${model.size_human || ''})`;
                         if (index === 0) option.selected = true;
                         modelSelect.appendChild(option);
                     });
 
-                    modelStatus.textContent = `✅ ${models.length} modelo${models.length > 1 ? 's' : ''} disponible${models.length > 1 ? 's' : ''}`;
-                    modelStatus.style.color = 'var(--success)';
+                    await checkActiveModel();
+                    updateModelStatus();
                 } else {
                     throw new Error(`HTTP ${response.status}`);
                 }
@@ -835,12 +817,57 @@
             }
         }
 
-        // Reload models when API URL or token changes
-        document.getElementById('apiUrl').addEventListener('change', loadModels);
-        document.getElementById('apiToken').addEventListener('change', loadModels);
+        async function checkActiveModel() {
+            try {
+                const llamaUrl = document.getElementById('llamaUrl').value;
+                const resp = await fetch(`${llamaUrl}/props`);
+                if (resp.ok) {
+                    const props = await resp.json();
+                    if (props.model_path) {
+                        currentActiveModel = props.model_path.split('/').pop();
+                    }
+                }
+            } catch (e) {
+                console.warn('Could not check active model:', e);
+            }
+        }
 
-        // Load models on page load
+        function updateModelStatus() {
+            const selected = modelSelect.value;
+            if (!selected) return;
+
+            if (selected === currentActiveModel) {
+                modelStatus.textContent = `✅ Activo: ${currentActiveModel}`;
+                modelStatus.style.color = 'var(--success)';
+            } else {
+                modelStatus.innerHTML = `⚠️ Activo: <b>${currentActiveModel || '?'}</b>. Para cambiar:<br><code style="font-size:0.75rem">./scripts/switch-model.sh ${selected}</code>`;
+                modelStatus.style.color = 'var(--warning)';
+            }
+        }
+
+        modelSelect.addEventListener('change', () => updateModelStatus());
+
+        document.getElementById('modelsUrl').addEventListener('change', loadModels);
+
         loadModels();
+
+        async function checkHealth() {
+            try {
+                const llamaUrl = document.getElementById('llamaUrl').value;
+                const resp = await fetch(`${llamaUrl}/health`);
+                if (resp.ok) {
+                    const health = await resp.json();
+                    if (health.status === 'ok') {
+                        statusDot.classList.add('active');
+                        statusText.textContent = 'Conectado a llama-server';
+                    }
+                }
+            } catch (e) {
+                statusDot.classList.remove('active');
+                statusText.textContent = 'Desconectado';
+            }
+        }
+        checkHealth();
 
         // File Input Handler
         fileInput.addEventListener('change', (e) => {
@@ -886,52 +913,60 @@
             reader.readAsDataURL(file);
         }
 
-        // Analyze Image
+        // Analyze Image - uses llama-server directly
         async function analyzeImage() {
             if (!currentImage) return;
 
-            const apiUrl = document.getElementById('apiUrl').value;
-            const apiToken = document.getElementById('apiToken').value;
-            const model = document.getElementById('modelSelect').value;
+            const llamaUrl = document.getElementById('llamaUrl').value;
             const prompt = document.getElementById('defaultPrompt').value;
 
             // Add loading message
             const loadingId = addMessage('system', '⏳ Analizando imagen...', true);
 
             try {
-                const response = await fetch(`${apiUrl}/v1/vision/analyze`, {
+                // Use llama-server's /v1/chat/completions (OpenAI compatible)
+                const response = await fetch(`${llamaUrl}/v1/chat/completions`, {
                     method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${apiToken}`,
-                        'Content-Type': 'application/json'
-                    },
+                    headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        image_base64: currentImage,
-                        model: model,
-                        prompt: prompt,
+                        messages: [
+                            {
+                                role: "user",
+                                content: [
+                                    { type: "text", text: prompt },
+                                    { type: "image_url", image_url: { url: `data:image/jpeg;base64,${currentImage}` } }
+                                ]
+                            }
+                        ],
                         max_tokens: 1024,
-                        temperature: 0.7
+                        temperature: 0.7,
+                        stream: false
                     })
                 });
 
                 if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    const errText = await response.text();
+                    throw new Error(`HTTP ${response.status}: ${errText.slice(0, 200)}`);
                 }
 
                 const data = await response.json();
-                
+                const content = data.choices?.[0]?.message?.content || 'No response';
+
                 // Update loading message
-                updateMessage(loadingId, `✅ Análisis completado (${data.processing_time_ms}ms)\n\n${data.content}`);
-                
+                const usage = data.usage || {};
+                updateMessage(loadingId, `✅ Análisis completado\nPrompt tokens: ${usage.prompt_tokens || '?'} | Completion: ${usage.completion_tokens || '?'}\n\n${content}`);
+
                 // Add to history
-                addToHistory(currentImage, data.content, data.processing_time_ms);
-                
+                addToHistory(currentImage, content, 0);
+
                 // Update status
-                setStatus('connected', 'Conectado');
-                
+                statusDot.classList.add('active');
+                statusText.textContent = 'Conectado a llama-server';
+
             } catch (error) {
                 updateMessage(loadingId, `❌ Error: ${error.message}`, 'error');
-                setStatus('error', 'Error');
+                statusDot.classList.remove('active');
+                statusText.textContent = 'Error';
             }
         }
 
@@ -1100,125 +1135,64 @@
         async function analyzeBatch() {
             if (batchImages.length === 0) return;
 
-            const apiUrl = document.getElementById('apiUrl').value;
-            const apiToken = document.getElementById('apiToken').value;
-            const model = document.getElementById('modelSelect').value;
+            const llamaUrl = document.getElementById('llamaUrl').value;
             const prompt = document.getElementById('defaultPrompt').value;
 
-            addMessage('system', `📦 Analizando ${batchImages.length} imágenes...`, true);
+            addMessage('system', `📦 Analizando ${batchImages.length} imágenes (secuencial)...`, true);
 
-            try {
-                const response = await fetch(`${apiUrl}/v1/vision/analyze/batch`, {
-                    method: 'POST',
-                    headers: {
-                        'Authorization': `Bearer ${apiToken}`,
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        images: batchImages.map((img, i) => ({
-                            image_base64: img.base64,
-                            id: img.name,
-                            prompt: prompt
-                        })),
-                        model: model,
-                        max_tokens: 512,
-                        parallel: true
-                    })
-                });
+            let results = [];
+            for (let i = 0; i < batchImages.length; i++) {
+                const img = batchImages[i];
+                try {
+                    const response = await fetch(`${llamaUrl}/v1/chat/completions`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            messages: [
+                                {
+                                    role: "user",
+                                    content: [
+                                        { type: "text", text: prompt },
+                                        { type: "image_url", image_url: { url: `data:image/jpeg;base64,${img.base64}` } }
+                                    ]
+                                }
+                            ],
+                            max_tokens: 512,
+                            temperature: 0.7
+                        })
+                    });
 
-                if (!response.ok) {
-                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const data = await response.json();
+                    results.push({ name: img.name, success: true, content: data.choices?.[0]?.message?.content || '' });
+                } catch (e) {
+                    results.push({ name: img.name, success: false, error: e.message });
                 }
-
-                const data = await response.json();
-                
-                let resultText = `📦 Batch completado: ${data.successful}/${data.total_images} exitosos\n`;
-                resultText += `⚡ Tiempo total: ${data.total_processing_time_ms}ms\n\n`;
-                
-                data.results.forEach(result => {
-                    resultText += `${result.success ? '✅' : '❌'} [${result.id}]\n`;
-                    if (result.success) {
-                        resultText += `${result.content.substring(0, 150)}...\n\n`;
-                    } else {
-                        resultText += `Error: ${result.error}\n\n`;
-                    }
-                });
-                
-                addMessage('system', resultText);
-                setStatus('connected', 'Batch completado');
-                
-            } catch (error) {
-                addMessage('system', `❌ Error en batch: ${error.message}`, 'error');
-                setStatus('error', 'Error');
             }
+
+            let resultText = `📦 Batch completado: ${results.filter(r => r.success).length}/${results.length} exitosos\n\n`;
+            results.forEach(r => {
+                resultText += `${r.success ? '✅' : '❌'} [${r.name}]\n`;
+                if (r.success) {
+                    resultText += `${r.content.substring(0, 150)}...\n\n`;
+                } else {
+                    resultText += `Error: ${r.error}\n\n`;
+                }
+            });
+
+            addMessage('system', resultText);
+            statusDot.classList.add('active');
+            statusText.textContent = 'Batch completado';
         }
 
-        // WebSocket Function
+        // WebSocket Function - requires Rust API (not available in direct mode)
         function connectWebSocket() {
-            const apiUrl = document.getElementById('apiUrl').value;
-            const apiToken = document.getElementById('apiToken').value;
-            
-            const wsUrl = apiUrl.replace('http://', 'ws://').replace('https://', 'wss://');
-            
-            wsConnection = new WebSocket(`${wsUrl}/v1/vision/stream/ws`, [
-                'Authorization', `Bearer ${apiToken}`
-            ]);
-
-            wsConnection.onopen = () => {
-                addMessage('system', '🔌 WebSocket conectado');
-                setStatus('connected', 'WebSocket activo');
-                
-                // Send config
-                wsConnection.send(JSON.stringify({
-                    type: 'config',
-                    model: document.getElementById('modelSelect').value,
-                    prompt: document.getElementById('defaultPrompt').value
-                }));
-            };
-
-            wsConnection.onmessage = (event) => {
-                const msg = JSON.parse(event.data);
-                handleWSMessage(msg);
-            };
-
-            wsConnection.onerror = (error) => {
-                addMessage('system', `❌ Error WebSocket: ${error.message}`, 'error');
-            };
-
-            wsConnection.onclose = () => {
-                addMessage('system', '🔌 WebSocket desconectado');
-                setStatus('disconnected', 'Desconectado');
-            };
+            addMessage('system', '⚠️ WebSocket requiere Rust API. En modo directo, usa análisis individual o batch.');
+            statusText.textContent = 'WebSocket no disponible';
         }
 
         function handleWSMessage(msg) {
-            switch (msg.type) {
-                case 'config_ack':
-                    addMessage('system', `⚙️ Configuración aplicada: ${msg.model}`);
-                    break;
-                case 'processing':
-                    addMessage('system', `⏳ Procesando frame #${msg.frame_number}...`);
-                    break;
-                case 'partial':
-                    // Append to last streaming message
-                    appendToLastMessage(msg.content);
-                    break;
-                case 'complete':
-                    addMessage('system', `✅ Frame #${msg.frame_number} completado en ${msg.processing_time_ms}ms`);
-                    break;
-                case 'error':
-                    addMessage('system', `❌ Error frame #${msg.frame_number}: ${msg.error}`, 'error');
-                    break;
-            }
-        }
-
-        function sendFrameToWS(imageBase64) {
-            if (wsConnection && wsConnection.readyState === WebSocket.OPEN) {
-                wsConnection.send(JSON.stringify({
-                    image_base64: imageBase64,
-                    max_tokens: 512
-                }));
-            }
+            // Stub - not used in direct mode
         }
 
         // Message Functions
