@@ -226,14 +226,18 @@ async fn switch_model(
 
     tracing::info!("🔄 Switching model to: {}", model);
 
-    // Execute switch script
-    let output = Command::new("bash")
-        .arg(&switch_script)
-        .arg(&model)
-        .output();
+    // Execute switch script in blocking thread (script takes ~1-2min)
+    let script_path = switch_script.clone();
+    let model_clone = model.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        Command::new("bash")
+            .arg(&script_path)
+            .arg(&model_clone)
+            .output()
+    }).await;
 
-    match output {
-        Ok(out) => {
+    match result {
+        Ok(Ok(out)) => {
             if out.status.success() {
                 tracing::info!("✅ Model switched to: {}", model);
                 Json(SwitchResponse {
@@ -243,20 +247,29 @@ async fn switch_model(
                 })
             } else {
                 let stderr = String::from_utf8_lossy(&out.stderr);
+                let stdout = String::from_utf8_lossy(&out.stdout);
                 tracing::error!("❌ Switch failed: {}", stderr);
                 Json(SwitchResponse {
                     status: "error".to_string(),
                     model,
-                    error: Some(stderr.lines().last().unwrap_or("Unknown error").to_string()),
+                    error: Some(stderr.lines().last().unwrap_or(stdout.lines().last().unwrap_or("Unknown error")).to_string()),
                 })
             }
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::error!("❌ Failed to execute switch script: {}", e);
             Json(SwitchResponse {
                 status: "error".to_string(),
                 model,
                 error: Some(format!("Failed to execute: {}", e)),
+            })
+        }
+        Err(e) => {
+            tracing::error!("❌ Join error: {}", e);
+            Json(SwitchResponse {
+                status: "error".to_string(),
+                model,
+                error: Some(format!("Internal error: {}", e)),
             })
         }
     }
