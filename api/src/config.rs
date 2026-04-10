@@ -5,7 +5,6 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub port: u16,
-    pub model_path: String,
     pub models_dir: String,
     pub api_token: String,
     pub context_size: u32,
@@ -40,11 +39,6 @@ impl Config {
                 .unwrap_or_else(|_| "8080".to_string())
                 .parse()
                 .expect("PORT must be a number"),
-            model_path: env::var("MODEL_PATH")
-                .unwrap_or_else(|_| {
-                    let default_model = project_root.join("models").join("model.gguf");
-                    default_model.to_string_lossy().to_string()
-                }),
             models_dir,
             api_token: env::var("API_TOKEN").expect("API_TOKEN must be set"),
             context_size: env::var("CONTEXT_SIZE")

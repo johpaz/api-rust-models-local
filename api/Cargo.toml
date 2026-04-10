@@ -6,8 +6,9 @@ edition = "2021"
 [dependencies]
 async-stream = "0.3"
 async-trait = "0.1"
-axum = { version = "0.7", features = ["json", "tokio", "http2", "multipart"] }
+axum = { version = "0.7", features = ["json", "tokio", "http2", "multipart", "ws"] }
 axum-extra = { version = "0.9", features = ["typed-header"] }
+base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 dashmap = "6"
 dotenvy = "0.15"
@@ -22,7 +23,7 @@ thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
 tower = { version = "0.4", features = ["full"] }
-tower-http = { version = "0.5", features = ["full", "auth", "cors"] }
+tower-http = { version = "0.5", features = ["full", "auth", "cors", "fs"] }
 tower_governor = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

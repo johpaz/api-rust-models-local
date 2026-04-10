@@ -74,6 +74,25 @@ CACHE_TYPE_V="${LLAMA_ARG_CACHE_TYPE_V:-q4_0}"
 # Ruta del binario compilado
 LLAMA_BINARY="$PROJECT_ROOT/llama-server/build-native/llama.cpp/build/bin/llama-server"
 
+# ═══════════════════════════════════════════════════════
+# Auto-descubrimiento de modelos
+# ═══════════════════════════════════════════════════════
+MODELS_DIR="$PROJECT_ROOT/models"
+
+# Si no hay MODEL_NAME en .env, seleccionar primer .gguf alfabéticamente
+if [ -z "$MODEL_NAME" ]; then
+    echo "🔍 Auto-descubriendo modelos en $MODELS_DIR..."
+    MODEL_NAME=$(find "$MODELS_DIR" -maxdepth 1 -name "*.gguf" -printf "%f\n" 2>/dev/null | sort | head -1)
+    if [ -z "$MODEL_NAME" ]; then
+        echo "❌ No se encontraron modelos .gguf en $MODELS_DIR"
+        echo "Descarga un modelo con:"
+        echo "  ./scripts/download-model.sh <repo> <filename>"
+        exit 1
+    fi
+    echo "✅ Modelo seleccionado automáticamente: $MODEL_NAME"
+    echo ""
+fi
+
 # Ruta del modelo
 MODEL_PATH="$PROJECT_ROOT/models/$MODEL_NAME"
 
@@ -93,9 +112,9 @@ if [ ! -f "$LLAMA_BINARY" ]; then
     exit 1
 fi
 
+# MODEL_NAME ya fue validado en auto-descubrimiento arriba
 if [ -z "$MODEL_NAME" ]; then
-    echo "❌ MODEL_NAME no está configurado en .env"
-    echo "Agrega: MODEL_NAME=nombre_del_modelo.gguf"
+    echo "❌ No se pudo seleccionar un modelo .gguf"
     exit 1
 fi
 

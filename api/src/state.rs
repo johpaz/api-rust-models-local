@@ -20,11 +20,30 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config) -> Self {
-        let engine = Arc::new(LlamaEngine::new(config.clone()).await.expect("Failed to initialize llama engine"));
-        
-        // Scan models directory for available models
+        // Scan models directory FIRST (before engine init)
         let available_models = Self::scan_models_directory(&config);
-        
+
+        // Get default model (first alphabetically)
+        let default_model = available_models.first().map(|m| m.name.clone());
+
+        // Initialize engine with available models info
+        let engine = Arc::new(
+            LlamaEngine::new(config.clone(), available_models.clone())
+                .await
+                .expect("Failed to initialize llama engine")
+        );
+
+        // If no default model found, use a placeholder
+        let default_model_name = default_model.unwrap_or_else(|| "no-model-loaded".to_string());
+
+        // Set the default model in the engine if it differs
+        if available_models.is_empty() {
+            tracing::warn!("No .gguf models found in {:?}. Place a .gguf file in models/ directory.", config.get_models_dir());
+        } else {
+            tracing::info!("Default model: {}", default_model_name);
+            tracing::info!("Available models: {}", available_models.iter().map(|m| m.name.as_str()).collect::<Vec<_>>().join(", "));
+        }
+
         Self {
             config,
             engine,
@@ -52,15 +71,15 @@ impl AppState {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            
+
             // Check if file has .gguf extension
             if path.extension().map_or(false, |ext| ext == "gguf") {
                 let file_name = path.file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
-                
+
                 let size_bytes = entry.metadata().map(|m| m.len()).ok();
-                
+
                 models.push(ModelInfo {
                     id: file_name.clone(),
                     name: file_name.clone(),
@@ -72,7 +91,7 @@ impl AppState {
 
         // Sort models by name
         models.sort_by(|a, b| a.name.cmp(&b.name));
-        
+
         tracing::info!("Found {} models in {:?}", models.len(), models_dir);
         models
     }

@@ -110,7 +110,7 @@ pub async fn chat_completions(
         match state.find_model_by_name(&payload.model) {
             Some(model_info) => {
                 tracing::info!("Using requested model: {}", model_info.name);
-                Some(model_info.name)
+                Some(model_info.name.clone())
             }
             None => {
                 tracing::warn!("Requested model '{}' not found, using default", payload.model);
@@ -121,9 +121,14 @@ pub async fn chat_completions(
         None
     };
 
+    // Use the requested model, or fall back to current model
+    let model_name = match &model_to_use {
+        Some(m) => m.clone(),
+        None => state.engine.get_model_name().await,
+    };
+
     let mut rx = state.engine.generate_stream(prompt, temperature, max_tokens, stop, model_to_use).await?;
     let id = Uuid::new_v4().to_string();
-    let model_name = state.engine.get_model_name().await;
 
     let stream = async_stream::stream! {
         yield Ok(Event::default().data(serde_json::to_string(&ChatCompletionChunk {

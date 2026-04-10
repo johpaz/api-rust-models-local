@@ -1,16 +1,18 @@
 use crate::config::Config;
 use crate::error::AppError;
+use crate::state::ModelInfo;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use tracing::error;
+use tracing::{error, info, warn};
 
 pub struct LlamaEngine {
     client: Client,
     server_url: String,
     current_model: Mutex<String>,
+    available_models: Vec<ModelInfo>,
 }
 
 #[derive(Serialize)]
@@ -21,6 +23,14 @@ struct CompletionRequest {
     stop: Vec<String>,
     stream: bool,
     model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    image_data: Option<Vec<ImageData>>,
+}
+
+#[derive(Serialize)]
+struct ImageData {
+    data: String,
+    id: i32,
 }
 
 #[derive(Deserialize)]
@@ -41,7 +51,7 @@ struct LlamaModelsResponse {
 }
 
 impl LlamaEngine {
-    pub async fn new(config: Config) -> Result<Self, AppError> {
+    pub async fn new(config: Config, available_models: Vec<ModelInfo>) -> Result<Self, AppError> {
         let client = Client::new();
         let server_url = config.llama_server_url.clone();
 
@@ -58,13 +68,23 @@ impl LlamaEngine {
         // Get the current model from llama-server
         let current_model = Self::fetch_current_model(&client, &server_url).await?;
 
+        // If we have available models and the current model differs from first available, try switching
+        if let Some(first_model) = available_models.first() {
+            if current_model != first_model.name {
+                info!("Current llama-server model ({}) differs from first available ({}), attempting switch", current_model, first_model.name);
+                // Try to switch to first available model as default
+                let _ = Self::try_switch_model(&client, &server_url, &first_model.name).await;
+            }
+        }
+
         tracing::info!("Connected to llama-server at {}", server_url);
         tracing::info!("Current model: {}", current_model);
-        
-        Ok(Self { 
-            client, 
+
+        Ok(Self {
+            client,
             server_url,
             current_model: Mutex::new(current_model),
+            available_models,
         })
     }
 
@@ -107,15 +127,10 @@ impl LlamaEngine {
         Ok("unknown-model".to_string())
     }
 
-    pub async fn get_model_name(&self) -> String {
-        self.current_model.lock().await.clone()
-    }
-
-    pub async fn switch_model(&self, model_name: String) -> Result<(), AppError> {
-        // Check if llama-server supports model switching via /v1/models API
-        // First, try to load the model
-        let load_response = self.client
-            .post(format!("{}/v1/models", self.server_url))
+    async fn try_switch_model(client: &Client, server_url: &str, model_name: &str) -> Result<(), String> {
+        // Try POST /v1/models to load/switch model
+        let load_response = client
+            .post(format!("{}/v1/models", server_url))
             .json(&serde_json::json!({
                 "model": model_name
             }))
@@ -124,24 +139,39 @@ impl LlamaEngine {
 
         match load_response {
             Ok(resp) if resp.status().is_success() => {
-                tracing::info!("Successfully switched to model: {}", model_name);
-                let mut model = self.current_model.lock().await;
-                *model = model_name;
+                info!("Successfully switched to model: {}", model_name);
                 Ok(())
             }
             Ok(resp) => {
                 let status = resp.status();
-                tracing::warn!("Model switching via API returned status: {}", status);
-                // If API doesn't support model switching, we'll still allow the request
-                // but note that the model parameter will be passed per-request
+                warn!("Model switching via POST /v1/models returned status: {}", status);
+                Err(format!("Status: {}", status))
+            }
+            Err(e) => {
+                warn!("Failed to switch model via API: {}", e);
+                Err(e.to_string())
+            }
+        }
+    }
+
+    pub async fn get_model_name(&self) -> String {
+        self.current_model.lock().await.clone()
+    }
+
+    pub async fn switch_model(&self, model_name: String) -> Result<(), AppError> {
+        match Self::try_switch_model(&self.client, &self.server_url, &model_name).await {
+            Ok(()) => {
+                let mut model = self.current_model.lock().await;
+                *model = model_name;
                 Ok(())
             }
             Err(e) => {
-                tracing::error!("Failed to switch model: {}", e);
-                Err(AppError::ModelLoadError(format!(
-                    "Failed to switch model: {}",
-                    e
-                )))
+                // If API doesn't support model switching, we still allow requests
+                // The model parameter will be passed per-request to /completion
+                warn!("Model switching not supported by llama-server, model param will be passed per-request: {}", e);
+                let mut model = self.current_model.lock().await;
+                *model = model_name;
+                Ok(())
             }
         }
     }
@@ -172,6 +202,92 @@ impl LlamaEngine {
                 stop,
                 stream: true,
                 model: Some(model_to_use.clone()),
+                image_data: None,
+            })
+            .send()
+            .await
+            .map_err(|e| AppError::EngineError(e.to_string()))?;
+
+        if !response.status().is_success() {
+            return Err(AppError::EngineError(format!(
+                "llama-server returned {}",
+                response.status()
+            )));
+        }
+
+        let mut byte_stream = response.bytes_stream();
+
+        tokio::spawn(async move {
+            let mut buffer = String::new();
+
+            while let Some(chunk) = byte_stream.next().await {
+                match chunk {
+                    Ok(bytes) => {
+                        buffer.push_str(&String::from_utf8_lossy(&bytes));
+
+                        while let Some(pos) = buffer.find('\n') {
+                            let line = buffer[..pos].trim().to_string();
+                            buffer = buffer[pos + 1..].to_string();
+
+                            if let Some(data) = line.strip_prefix("data: ") {
+                                match serde_json::from_str::<CompletionChunk>(data) {
+                                    Ok(c) if c.stop => return,
+                                    Ok(c) if !c.content.is_empty() => {
+                                        if tx.send(c.content).await.is_err() {
+                                            return;
+                                        }
+                                    }
+                                    Err(e) => error!("SSE parse error: {}", e),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!("Stream error: {}", e);
+                        break;
+                    }
+                }
+            }
+        });
+
+        Ok(rx)
+    }
+
+    /// Generate text stream with image support
+    pub async fn generate_stream_with_image(
+        &self,
+        prompt: String,
+        temperature: f32,
+        max_tokens: usize,
+        stop: Vec<String>,
+        model: Option<String>,
+        image_base64: Option<String>,
+    ) -> Result<mpsc::Receiver<String>, AppError> {
+        let (tx, rx) = mpsc::channel(100);
+
+        let model_to_use = match model {
+            Some(m) => m,
+            None => self.get_model_name().await,
+        };
+
+        // Prepare image data if provided
+        let image_data = image_base64.map(|b64| vec![ImageData {
+            data: b64,
+            id: 1,
+        }]);
+
+        let response = self
+            .client
+            .post(format!("{}/completion", self.server_url))
+            .json(&CompletionRequest {
+                prompt,
+                temperature,
+                n_predict: max_tokens as i32,
+                stop,
+                stream: true,
+                model: Some(model_to_use.clone()),
+                image_data,
             })
             .send()
             .await

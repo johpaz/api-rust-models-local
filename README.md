@@ -234,18 +234,21 @@ ps aux | grep "[l]lama-server"
 
 ## 📡 API Endpoints
 
-| Endpoint | Método | Descripción |
-|----------|--------|-------------|
-| `/health` | GET | Estado del sistema |
-| `/v1/models` | GET | **Lista todos los modelos disponibles** ✨ |
-| `/v1/chat/completions` | POST | Generar texto (SSE) - **soporta selección de modelo** |
-| `/v1/images/generations` | POST | Generar imágenes - **selección de modelo** |
-| `/v1/audio/speech` | POST | Text-to-Speech - **selección de modelo** |
-| `/v1/audio/transcriptions` | POST | Transcribir audio (Whisper) - **selección de modelo** |
+| Endpoint | Método | Tipo | Descripción |
+|----------|--------|------|-------------|
+| `/health` | GET | HTTP | Estado del sistema |
+| `/v1/models` | GET | HTTP | **Lista todos los modelos disponibles** ✨ |
+| `/v1/chat/completions` | POST | HTTP/SSE | Generar texto - **soporta selección de modelo** |
+| `/v1/vision/analyze` | POST | HTTP | **Analizar imagen** - respuesta JSON ✨ |
+| `/v1/vision/analyze/batch` | POST | HTTP | **Analizar múltiples imágenes** (paralelo/secuencial) ✨ |
+| `/v1/vision/stream/ws` | GET | WebSocket | **Streaming en tiempo real** continuo ✨ |
+| `/v1/images/generations` | POST | HTTP | Generar imágenes |
+| `/v1/audio/speech` | POST | HTTP | Text-to-Speech |
+| `/v1/audio/transcriptions` | POST | HTTP | Transcribir audio (Whisper) |
 
-### ✨ Multi-Model Selection
+### ✨ Multi-Model Selection & Visión
 
-La API ahora permite **seleccionar entre múltiples modelos** disponibles:
+La API ahora permite **seleccionar entre múltiples modelos** y **analizar imágenes en tiempo real**:
 
 ```bash
 # 1. Ver modelos disponibles
@@ -259,7 +262,16 @@ curl http://localhost:9000/v1/chat/completions \
     "messages": [{"role": "user", "content": "Hola!"}]
   }'
 
-# 3. Transcribir audio con Whisper
+# 3. Analizar imagen (visión)
+curl http://localhost:9000/v1/vision/analyze \
+  -H "Authorization: Bearer $API_TOKEN" \
+  -d '{
+    "image_base64": "<BASE64_IMAGE>",
+    "model": "gemma4:e4b",
+    "prompt": "¿Qué ves en esta imagen?"
+  }'
+
+# 4. Transcribir audio con Whisper
 curl http://localhost:9000/v1/audio/transcriptions \
   -H "Authorization: Bearer $API_TOKEN" \
   -F "file=@audio.mp3" \
@@ -267,13 +279,15 @@ curl http://localhost:9000/v1/audio/transcriptions \
   -F "language=es"
 ```
 
-Ver [docs/MULTI-MODEL.md](docs/MULTI-MODEL.md) para guía completa.
+Ver [docs/VISION-API.md](docs/VISION-API.md) para guía completa de visión.
 
 ## 📖 Documentación
 
+- **[VISION-API](docs/VISION-API.md)** — ✨ Guía completa de visión en tiempo real
 - **[API-CONSUME](docs/API-CONSUME.md)** — Cómo consumir la API (curl, Python, JS, Bun, ejemplos)
 - **[API](docs/API.md)** — Endpoints, parámetros y ejemplos detallados
-- **[MULTI-MODEL](docs/MULTI-MODEL.md)** — ✨ Guía de selección de modelos
+- **[MULTI-MODEL](docs/MULTI-MODEL.md)** — Guía de selección de modelos
+- **[GEMMA4-MULTIMODAL](docs/GEMMA4-MULTIMODAL.md)** — Capacidades multimodales de Gemma 4
 - **[NATIVE-DEPLOY](docs/NATIVE-DEPLOY.md)** — Guía completa de despliegue nativo
 - **[TURBOQUANT](docs/TURBOQUANT.md)** — Algoritmo, benchmarks, troubleshooting
 - **[STATUS](docs/STATUS.md)** — Estado actual de componentes
