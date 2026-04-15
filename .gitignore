@@ -1,6 +1,7 @@
 # Modelos (muy grandes para git)
 models/*.gguf
 models/*.safetensors
+models/layers/
 !models/.gitkeep
 
 # Build artifacts
