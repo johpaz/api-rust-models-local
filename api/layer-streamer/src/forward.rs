@@ -577,4 +577,68 @@ impl StreamingForward {
         info!("generate: produced {} new tokens", output_tokens.len());
         Ok(output_tokens)
     }
+
+    /// Variante streaming de `generate()`.
+    ///
+    /// Igual que `generate()` pero llama `on_token(token_id)` por cada token
+    /// generado en la fase de decode, antes de continuar con el siguiente paso.
+    /// Permite enviar tokens al cliente en tiempo real (SSE) sin esperar al final.
+    ///
+    /// Devuelve el número de tokens generados.
+    pub fn generate_streaming<F>(
+        &mut self,
+        prompt_tokens: &[u32],
+        max_new_tokens: usize,
+        temperature: f32,
+        eos_token: u32,
+        mut on_token: F,
+    ) -> Result<usize>
+    where
+        F: FnMut(u32),
+    {
+        if prompt_tokens.is_empty() {
+            anyhow::bail!("generate_streaming() called with empty prompt");
+        }
+
+        let strategy = if temperature <= 0.0 {
+            SamplingStrategy::Greedy
+        } else {
+            SamplingStrategy::Random
+        };
+
+        let prompt_len = prompt_tokens.len();
+        info!("generate_streaming: prefill {} tokens, decode up to {}", prompt_len, max_new_tokens);
+
+        // --- Prefill phase ---
+        let mut last_logits: Option<Tensor> = None;
+        for (i, &token_id) in prompt_tokens.iter().enumerate() {
+            let logits = self.forward_token(token_id as usize)?;
+            if i == prompt_len - 1 {
+                last_logits = Some(logits);
+            }
+        }
+
+        let mut logits = last_logits
+            .expect("prompt_tokens was non-empty but produced no logits");
+
+        // --- Decode phase ---
+        let mut count = 0usize;
+
+        for step in 0..max_new_tokens {
+            let next_token = sample(&logits, strategy, temperature) as u32;
+
+            if next_token == eos_token {
+                info!("generate_streaming: EOS at step {}", step);
+                break;
+            }
+
+            on_token(next_token);
+            count += 1;
+
+            logits = self.forward_token(next_token as usize)?;
+        }
+
+        info!("generate_streaming: produced {} new tokens", count);
+        Ok(count)
+    }
 }
