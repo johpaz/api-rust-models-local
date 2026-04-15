@@ -1,333 +1,162 @@
-# 🚀 LLM API Server con TurboQuant
+# LLM API Server
 
-API HTTP multi-modelo con compresión **TurboQuant** para el cache KV.
+API HTTP local para modelos LLM en formato GGUF. Motor de inferencia nativo en Rust con layer-streaming (sin dependencias externas).
 
-## 🏗️ Diagrama de Infraestructura
+## Arquitectura
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────┐
-│                          Sistema Host (Linux / Fedora)                          │
-│                                                                                 │
-│  ┌──────────────┐         ┌──────────────────────────────────────────────┐     │
-│  │   Cliente    │  HTTP   │          llama-server :8080                  │     │
-│  │  curl/Post   │────────▶│  ┌──────────────────────────────────────┐   │     │
-│  │  Python/Node │  :8080  │  │  Modelo: google_gemma-4-E4B-it      │   │     │
-│  └──────────────┘         │  │  Cache KV: q4_0 (4-bit)             │   │     │
-│                           │  │  Context: 4096 tokens               │   │     │
-│                           │  │                                      │   │     │
-│                           │  │  GPU Offload: 35/43 capas ──────────┼───┼────┐
-│                           │  │                                      │   │    │
-│                           │  │  TurboQuant: TURBO2/3/4 (compilado)  │   │    │
-│                           │  └──────────────────────────────────────┘   │    │
-│                           └──────────────────────────────────────────────┘    │
-│                                                                              ▼│
-│                           ┌───────────────────────────────────────────────────┐│
-│                           │              GPU: AMD RADV REMBRANDT              ││
-│                           │              Vulkan 1.4.341                       ││
-│                           │              /dev/dri/renderD128                  ││
-│                           └───────────────────────────────────────────────────┘│
-│                                                                                 │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                     Binarios Compilados (Nativo)                        │  │
-│  │  ┌──────────────────────────────────────────────┐  ┌───────────────────┐ │  │
-│  │  │ llama-server (71MB)                          │  │ Rust API (Axum)   │ │  │
-│  │  │ llama-server/build-native/llama.cpp/build/   │  │ api/target/       │ │  │
-│  │  │   bin/llama-server                           │  │   release/        │ │  │
-│  │  └──────────────────────────────────────────────┘  │   rust_llm_api    │ │  │
-│  │                                                     └───────────────────┘ │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                 │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                     Modelos GGUF (./models/)                            │  │
-│  │  ┌──────────────────────────────────────────────────────────────────┐   │  │
-│  │  │ google_gemma-4-E4B-it-Q4_K_M.gguf    (5.1 GB, 7.5B params) ✅   │   │  │
-│  │  │ google_gemma-4-31B-it-Q4_K_M.gguf    (19 GB, 30.7B params)      │   │  │
-│  │  │ nvidia_Nemotron-Cascade-2-30B-A3B    (17 GB, 30B params)        │   │  │
-│  │  │ Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf     (20 GB, 35B params)        │   │  │
-│  │  └──────────────────────────────────────────────────────────────────┘   │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│                                                                                 │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │                     Variables Vulkan Requeridas                         │  │
-│  │  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:...   │  │
-│  │  MESA_VK_WSI=1                                                          │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────────────────────────────┘
+api/src/
+├── main.rs              ← startup, carga del actor en background
+├── config.rs            ← variables de entorno
+├── inference.rs         ← actor de inferencia (patrón Actor + canales)
+├── engine/mod.rs        ← fachada pública del motor
+├── middleware/mod.rs    ← CORS
+└── routes/
+    ├── mod.rs           ← AppState + build_router()
+    ├── models.rs        ← listar y cambiar modelos
+    ├── health.rs        ← salud y gestión del actor
+    └── chat.rs          ← completions (batch + SSE streaming)
+
+api/layer-streamer/      ← crate de inferencia GGUF layer-by-layer
+models/                  ← archivos .gguf + capas pre-divididas
 ```
 
-## ⚡ Inicio Rápido
+**Flujo de inferencia:**
+```
+Cliente HTTP → Axum (puerto 3001) → canal mpsc → Actor thread
+                                                  (dueño exclusivo de StreamingForward)
+                                                  ↓ token a token
+                                               SSE / batch response
+```
 
-### Opción 1: Despliegue Nativo (Recomendado - Máximo Rendimiento)
-
-**Estado**: ✅ Verificado funcionando con GPU Vulkan (Abril 2026)
+## Inicio rápido
 
 ```bash
-# 1. Configurar (.env)
+# 1. Configurar
 cp .env.example .env
-nano .env  # Editar MODEL_NAME, GPU_LAYERS, etc.
+# Editar LAYER_STREAMING_MODEL y LAYER_STREAMING_LAYERS_DIR
 
-# 2. Iniciar (lee configuración desde .env)
-./scripts/start-llama-server.sh
-
-# 3. Verificar
-curl http://localhost:8080/health
-# Respuesta: {"status":"ok"}
+# 2. Iniciar
+cd api
+cargo run --release
 ```
 
-**Verificar GPU activa:**
-```bash
-grep -i "offload" /tmp/llama.log
-```
+El servidor arranca **inmediatamente** en el puerto 3001. El modelo se carga en background — mientras tanto `/health` y `/v1/models` ya responden.
 
-**Detener servidor:**
-```bash
-pkill -f "llama-server"
-```
-
-**Cambiar de modelo:**
-```bash
-nano .env  # Cambiar MODEL_NAME
-pkill -f "llama-server"
-./scripts/start-llama-server.sh
-```
-
-**Ventajas:**
-- ✅ Acceso directo a GPU (Vulkan) - verificado con AMD RADV REMBRANDT
-- ✅ Boot instantáneo
-- ✅ Menor uso de memoria
-- ✅ TurboQuant parches compilados (idempotentes)
-- ✅ Configuración centralizada en `.env`
-
-Ver [docs/NATIVE-DEPLOY.md](docs/NATIVE-DEPLOY.md) para guía completa y systemd.
-
----
-
-## 🔧 Gestión del Servicio
-
-### Comandos Básicos
-
-| Acción | Comando |
-|--------|---------|
-| **Detener** | `pkill -f "llama-server"` |
-| **Ver logs** | `tail -f /tmp/llama.log` |
-| **Verificar estado** | `curl http://localhost:8080/health` |
-| **Verificar GPU** | `grep -i "offload" /tmp/llama.log` |
-
-### 🔄 Cambiar de Modelo
-
-```bash
-# 1. Detener servidor actual
-pkill -f "llama-server"
-sleep 2
-
-# 2. Iniciar con otro modelo
-setsid env \
-  VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json:/usr/share/vulkan/icd.d/intel_icd.x86_64.json \
-  MESA_VK_WSI=1 \
-  "./llama-server/build-native/llama.cpp/build/bin/llama-server" \
-  --model "./models/Qwen3.5-9B.Q8_0.gguf" \
-  --host 0.0.0.0 --port 8080 \
-  --ctx-size 4096 --n-gpu-layers 35 \
-  --cache-type-k q4_0 --cache-type-v q4_0 \
-  > /tmp/llama.log 2>&1 &
-disown
-
-# 3. Esperar carga y verificar
-sleep 20 && curl http://localhost:8080/health
-```
-
-### 📊 Modelos Disponibles
-
-| Modelo | Params | Tamaño | Comando `--model` |
-|--------|--------|--------|-------------------|
-| **Gemma 4 E4B** ⭐ | 7.5B | 5.1 GB | `./models/google_gemma-4-E4B-it-Q4_K_M.gguf` |
-| Gemma 4 31B | 30.7B | 19 GB | `./models/google_gemma-4-31B-it-Q4_K_M.gguf` |
-| Nemotron Cascade 2 | 30B | 17 GB | `./models/nvidia_Nemotron-Cascade-2-30B-A3B-IQ2_M.gguf` |
-| Qwen 3.5 35B | 35B | 20 GB | `./models/Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf` |
-
-### 📝 Logs y Debugging
-
-```bash
-# Logs en tiempo real
-tail -f /tmp/llama.log
-
-# Verificar GPU activa
-grep -iE "vulkan|gpu|offload" /tmp/llama.log
-# Esperado: "offloaded 35/43 layers to GPU"
-
-# Ver uso de memoria VRAM
-grep "memory breakdown" /tmp/llama.log
-# Esperado: "Vulkan0 (Graphics (RADV REMBRANDT)) | 20066 = ..."
-
-# Ver errores
-grep -iE "error|fail|abort" /tmp/llama.log
-
-# Ver proceso corriendo
-ps aux | grep "[l]lama-server"
-```
-
-### ⚙️ Ajustar Capas GPU
-
-| Situación | Valor | Comando |
-|-----------|-------|---------|
-| **Normal** (7.5B) | 35 capas | `--n-gpu-layers 35` |
-| **Poca VRAM** | 20 capas | `--n-gpu-layers 20` |
-| **Máxima GPU** (12GB+) | 999 capas | `--n-gpu-layers 999` |
-| **Solo CPU** | 0 capas | `--n-gpu-layers 0` |
-
-### ⚙️ Ajustar Contexto
-
-| Valor | Uso RAM | Cuándo usar |
-|-------|---------|-------------|
-| `--ctx-size 2048` | Menor | Conversaciones cortas, poca RAM |
-| `--ctx-size 4096` | Medio | **Default recomendado** |
-| `--ctx-size 8192` | Mayor | Documentos largos, más RAM disponible |
-
-### 📥 Descargar Nuevo Modelo
-
-```bash
-./scripts/download-model.sh <repo_id> <filename>
-
-# Ejemplo:
-./scripts/download-model.sh bartowski/google_gemma-4-E4B-it-GGUF \
-    google_gemma-4-E4B-it-Q4_K_M.gguf
-```
-
-## 📁 Estructura
-
-```
-├── api/                    ← API Rust (Axum)
-│   ├── src/
-│   ├── Cargo.toml
-├── llama-server/           ← llama.cpp + TurboQuant
-│   ├── ggml/src/
-│   │   ├── ggml-turboquant.c   ← Core TurboQuant
-│   │   └── ggml-turboquant.h
-│   ├── patches/
-├── models/                 ← Modelos GGUF
-├── docs/                   ← Documentación
-│   ├── NATIVE-DEPLOY.md    ← Guía despliegue nativo
-│   ├── TURBOQUANT.md       ← TurboQuant algoritmo
-│   └── STATUS.md           ← Estado de componentes
-├── scripts/                ← Utilidades
-│   ├── start-llama-server.sh  ← Iniciar servidor (lee .env)
-│   ├── install-native.sh   ← Instalador nativo + systemd
-│   ├── build-api.sh        ← Build API Rust
-│   └── build-llama-server.sh ← Build llama.cpp
-├── systemd/                ← Servicios systemd
-│   ├── llama-server.service
-│   └── llm-api.service
-└── .env.example
-```
-
-## 🔧 Comandos
-
-| Comando | Descripción |
-|---------|-------------|
-| `./scripts/start-llama-server.sh` | Iniciar servidor (lee .env) |
-| `pkill -f "llama-server"` | Detener servidor |
-| `tail -f /tmp/llama.log` | Ver logs en tiempo real |
-| `curl http://localhost:8080/health` | Verificar estado |
-| `grep -i "offload" /tmp/llama.log` | Verificar GPU activa |
-| `./scripts/build-llama-server.sh` | Recompilar llama.cpp |
-| `./scripts/build-api.sh` | Recompilar API Rust |
-
-## 📡 API Endpoints
-
-| Endpoint | Método | Tipo | Descripción |
-|----------|--------|------|-------------|
-| `/health` | GET | HTTP | Estado del sistema |
-| `/v1/models` | GET | HTTP | **Lista todos los modelos disponibles** ✨ |
-| `/v1/chat/completions` | POST | HTTP/SSE | Generar texto - **soporta selección de modelo** |
-| `/v1/vision/analyze` | POST | HTTP | **Analizar imagen** - respuesta JSON ✨ |
-| `/v1/vision/analyze/batch` | POST | HTTP | **Analizar múltiples imágenes** (paralelo/secuencial) ✨ |
-| `/v1/vision/stream/ws` | GET | WebSocket | **Streaming en tiempo real** continuo ✨ |
-| `/v1/images/generations` | POST | HTTP | Generar imágenes |
-| `/v1/audio/speech` | POST | HTTP | Text-to-Speech |
-| `/v1/audio/transcriptions` | POST | HTTP | Transcribir audio (Whisper) |
-
-### ✨ Multi-Model Selection & Visión
-
-La API ahora permite **seleccionar entre múltiples modelos** y **analizar imágenes en tiempo real**:
-
-```bash
-# 1. Ver modelos disponibles
-curl http://localhost:9000/v1/models -H "Authorization: Bearer $API_TOKEN"
-
-# 2. Usar un modelo específico para chat
-curl http://localhost:9000/v1/chat/completions \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -d '{
-    "model": "google_gemma-4-E4B-it-Q4_K_M.gguf",
-    "messages": [{"role": "user", "content": "Hola!"}]
-  }'
-
-# 3. Analizar imagen (visión)
-curl http://localhost:9000/v1/vision/analyze \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -d '{
-    "image_base64": "<BASE64_IMAGE>",
-    "model": "gemma4:e4b",
-    "prompt": "¿Qué ves en esta imagen?"
-  }'
-
-# 4. Transcribir audio con Whisper
-curl http://localhost:9000/v1/audio/transcriptions \
-  -H "Authorization: Bearer $API_TOKEN" \
-  -F "file=@audio.mp3" \
-  -F "model=whisper-large-v3-turbo.gguf" \
-  -F "language=es"
-```
-
-Ver [docs/VISION-API.md](docs/VISION-API.md) para guía completa de visión.
-
-## 📖 Documentación
-
-- **[VISION-API](docs/VISION-API.md)** — ✨ Guía completa de visión en tiempo real
-- **[API-CONSUME](docs/API-CONSUME.md)** — Cómo consumir la API (curl, Python, JS, Bun, ejemplos)
-- **[API](docs/API.md)** — Endpoints, parámetros y ejemplos detallados
-- **[MULTI-MODEL](docs/MULTI-MODEL.md)** — Guía de selección de modelos
-- **[GEMMA4-MULTIMODAL](docs/GEMMA4-MULTIMODAL.md)** — Capacidades multimodales de Gemma 4
-- **[NATIVE-DEPLOY](docs/NATIVE-DEPLOY.md)** — Guía completa de despliegue nativo
-- **[TURBOQUANT](docs/TURBOQUANT.md)** — Algoritmo, benchmarks, troubleshooting
-- **[STATUS](docs/STATUS.md)** — Estado actual de componentes
-- **[MODELS](docs/MODELS.md)** — Modelos soportados y descargas
-
-## 🧠 Modelos Soportados
-
-| Modelo | Params | Tamaño | RAM Mínima |
-|--------|--------|--------|-----------|
-| Gemma 4 E4B | 7.5B | ~4.5 GB | ~6 GB |
-| Gemma 4 31B | 30.7B | ~19 GB | ~22 GB |
-| Nemotron Cascade 2 | 30B | ~12 GB | ~14 GB |
-| Qwen 3.5 35B | 35B | ~20 GB | ~22 GB |
-
-## 🏗️ TurboQuant
-
-Compresión del cache KV con el algoritmo de Google Research:
-- **2-4 bits/canal** vs FP16
-- **5.3x menos memoria** en cache KV
-- **Sin calibración** previa
-- **Cualquier arquitectura** GGUF ≤30B
-
-Ver [`docs/TURBOQUANT.md`](docs/TURBOQUANT.md) para detalles técnicos.
-
-## 🔧 Variables de Entorno
+## Configuración (.env)
 
 | Variable | Default | Descripción |
 |----------|---------|-------------|
-| `MODEL_NAME` | `model.gguf` | Nombre del modelo en `models/` |
-| `CONTEXT_SIZE` | `8192` | Tokens de contexto |
-| `CACHE_TYPE_K` | `turbo3` | Cuantización cache K |
-| `CACHE_TYPE_V` | `turbo3` | Cuantización cache V |
-| `API_TOKEN` | *(requerido)* | Token de autenticación |
-| `API_PORT` | `9000` | Puerto externo |
+| `API_PORT` | `3001` | Puerto del servidor |
+| `HOST` | `0.0.0.0` | Interfaz de red |
+| `INFERENCE_BACKEND` | `layer_streaming` | Motor de inferencia |
+| `LAYER_STREAMING_MODEL` | — | Ruta al archivo `.gguf` |
+| `LAYER_STREAMING_LAYERS_DIR` | — | Directorio con capas pre-divididas |
+| `RUST_LOG` | `info` | Nivel de logging (`info`, `debug`, `trace`) |
 
 Ver [`.env.example`](.env.example) para todas las opciones.
 
-## 📄 Licencia
+## Endpoints
 
-Basado en:
-- **llama.cpp** — MIT License
-- **TurboQuant** — Paper Google Research (arXiv:2504.19874)
-- **API Rust** — Implementación propia
+| Endpoint | Método | Descripción |
+|----------|--------|-------------|
+| `/health` | GET | Estado del servidor y del actor |
+| `/v1/models` | GET | Lista modelos disponibles (compatible OpenAI) |
+| `/models.json` | GET | Lista modelos con metadatos |
+| `/api/switch` | POST | Cambiar modelo activo |
+| `/api/rescan` | POST | Re-escanear directorio de modelos |
+| `/api/stream/status` | GET | Estado del actor (modelo cargado, capas, vocab) |
+| `/api/stream/load` | POST | Cargar modelo con rutas explícitas |
+| `/v1/completions` | POST | Completar texto (legacy) |
+| `/v1/chat/completions` | POST | Chat — soporta `stream: true` (SSE) |
+
+CORS abierto — cualquier origen puede llamar la API.
+
+## Uso desde una UI externa
+
+### Listar modelos
+```bash
+curl http://localhost:3001/v1/models
+```
+
+### Cambiar modelo activo
+```bash
+curl -X POST http://localhost:3001/api/switch \
+  -H "Content-Type: application/json" \
+  -d '{"model": "Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf"}'
+```
+> El modelo debe tener su directorio de capas en `models/layers/{nombre_sin_.gguf}/`
+
+### Chat (batch)
+```bash
+curl -X POST http://localhost:3001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "google_gemma-4-E4B-it-Q4_K_M.gguf",
+    "messages": [{"role": "user", "content": "Hola"}],
+    "max_tokens": 256
+  }'
+```
+
+### Chat con streaming SSE
+```bash
+curl -X POST http://localhost:3001/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "google_gemma-4-E4B-it-Q4_K_M.gguf",
+    "messages": [{"role": "user", "content": "Hola"}],
+    "stream": true
+  }'
+```
+
+### Python (SDK OpenAI)
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://localhost:3001/v1", api_key="local")
+
+response = client.chat.completions.create(
+    model="google_gemma-4-E4B-it-Q4_K_M.gguf",
+    messages=[{"role": "user", "content": "Hola"}],
+    max_tokens=256,
+)
+print(response.choices[0].message.content)
+```
+
+### Verificar estado del actor
+```bash
+curl http://localhost:3001/api/stream/status
+# {"loaded":true,"model":"google_gemma-4-E4B-it-Q4_K_M.gguf","vocab_size":256000,"n_layers":43}
+```
+
+## Modelos disponibles
+
+| Modelo | Tamaño | Estado |
+|--------|--------|--------|
+| google_gemma-4-E4B-it-Q4_K_M.gguf | 5.1 GB | Capas pre-divididas listas |
+| google_gemma-4-31B-it-Q4_K_M.gguf | 19 GB | — |
+| Qwen_Qwen3.5-35B-A3B-Q4_K_M.gguf | 20 GB | — |
+| nvidia_Nemotron-Cascade-2-30B-A3B-IQ2_M.gguf | 17 GB | — |
+
+## Layer-streaming
+
+El motor carga y procesa el modelo **capa por capa**, sin necesidad de tener todo el modelo en RAM o VRAM simultáneamente:
+
+1. Para cada token: carga capa → forward (Attention + FFN) → descarta capa
+2. Soporta arquitecturas Llama, Gemma, Mistral, Qwen
+3. KV cache completo en RAM
+4. Pre-dividir capas mejora la velocidad de carga:
+
+```bash
+# Las capas pre-divididas se ubican en:
+models/layers/{nombre_del_modelo_sin_.gguf}/
+#   layer_000.bin, layer_001.bin, ...
+```
+
+## Compilar
+
+```bash
+cd api
+cargo build --release
+# Binario: api/target/release/rust_llm_api
+```

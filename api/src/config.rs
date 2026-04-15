@@ -1,38 +1,18 @@
-use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;
 
-/// Which inference backend to use.
-#[derive(Debug, Clone, PartialEq)]
-pub enum InferenceBackend {
-    /// Delegate all inference to the external llama-server process (default).
-    LlamaServer,
-    /// Use the built-in layer-by-layer streaming engine (low-VRAM mode).
-    LayerStreaming,
-}
-
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub port: u16,
     pub host: String,
-    pub llama_server_url: String,
     pub models_dir: String,
-    pub llama_server_path: String,
-    /// Which inference engine to use ("llama_server" or "layer_streaming")
-    #[serde(skip)]
     pub inference_backend: String,
-    /// Path to the GGUF file when using layer_streaming backend
-    #[serde(skip)]
     pub layer_streaming_model: Option<String>,
-    /// Path to the pre-split layers directory when using layer_streaming backend
-    #[serde(skip)]
     pub layer_streaming_layers_dir: Option<String>,
 }
 
 impl Config {
     pub fn from_env() -> Self {
-        dotenvy::from_path(env::current_dir().expect("Failed to get current directory").join(".env")).ok();
-
         let current_dir = env::current_dir().expect("Failed to get current directory");
         let project_root = if current_dir.ends_with("api") {
             current_dir.parent().map(|p| p.to_path_buf()).unwrap_or_default()
@@ -40,36 +20,28 @@ impl Config {
             current_dir
         };
 
+        // Cargar .env desde la raíz del proyecto (funciona tanto si se ejecuta
+        // desde api/ como desde la raíz)
+        dotenvy::from_path(project_root.join(".env")).ok();
+
         let models_dir = env::var("MODELS_DIR")
             .unwrap_or_else(|_| project_root.join("models").to_string_lossy().to_string());
-
-        let llama_server_path = env::var("LLAMA_SERVER_PATH")
-            .unwrap_or_else(|_| project_root.join("llama-server/build-native/llama.cpp/build/bin/llama-server").to_string_lossy().to_string());
-
-        let inference_backend = env::var("INFERENCE_BACKEND")
-            .unwrap_or_else(|_| "llama_server".to_string());
-
-        let layer_streaming_model = env::var("LAYER_STREAMING_MODEL").ok();
-        let layer_streaming_layers_dir = env::var("LAYER_STREAMING_LAYERS_DIR").ok();
 
         Self {
             port: env::var("API_PORT")
                 .or_else(|_| env::var("PORT"))
                 .unwrap_or_else(|_| "3001".to_string())
                 .parse()
-                .expect("Port must be a number"),
+                .expect("API_PORT debe ser un número"),
             host: env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string()),
-            llama_server_url: env::var("LLAMA_SERVER_URL")
-                .unwrap_or_else(|_| "http://localhost:8080".to_string()),
             models_dir,
-            llama_server_path,
-            inference_backend,
-            layer_streaming_model,
-            layer_streaming_layers_dir,
+            inference_backend: env::var("INFERENCE_BACKEND")
+                .unwrap_or_else(|_| "layer_streaming".to_string()),
+            layer_streaming_model: env::var("LAYER_STREAMING_MODEL").ok(),
+            layer_streaming_layers_dir: env::var("LAYER_STREAMING_LAYERS_DIR").ok(),
         }
     }
 
-    /// Returns true when the layer-streaming engine is configured.
     pub fn is_layer_streaming(&self) -> bool {
         self.inference_backend == "layer_streaming"
     }
