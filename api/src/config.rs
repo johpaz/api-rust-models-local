@@ -2,6 +2,15 @@ use serde::Deserialize;
 use std::env;
 use std::path::PathBuf;
 
+/// Which inference backend to use.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InferenceBackend {
+    /// Delegate all inference to the external llama-server process (default).
+    LlamaServer,
+    /// Use the built-in layer-by-layer streaming engine (low-VRAM mode).
+    LayerStreaming,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct Config {
     pub port: u16,
@@ -9,6 +18,15 @@ pub struct Config {
     pub llama_server_url: String,
     pub models_dir: String,
     pub llama_server_path: String,
+    /// Which inference engine to use ("llama_server" or "layer_streaming")
+    #[serde(skip)]
+    pub inference_backend: String,
+    /// Path to the GGUF file when using layer_streaming backend
+    #[serde(skip)]
+    pub layer_streaming_model: Option<String>,
+    /// Path to the pre-split layers directory when using layer_streaming backend
+    #[serde(skip)]
+    pub layer_streaming_layers_dir: Option<String>,
 }
 
 impl Config {
@@ -28,6 +46,12 @@ impl Config {
         let llama_server_path = env::var("LLAMA_SERVER_PATH")
             .unwrap_or_else(|_| project_root.join("llama-server/build-native/llama.cpp/build/bin/llama-server").to_string_lossy().to_string());
 
+        let inference_backend = env::var("INFERENCE_BACKEND")
+            .unwrap_or_else(|_| "llama_server".to_string());
+
+        let layer_streaming_model = env::var("LAYER_STREAMING_MODEL").ok();
+        let layer_streaming_layers_dir = env::var("LAYER_STREAMING_LAYERS_DIR").ok();
+
         Self {
             port: env::var("API_PORT")
                 .or_else(|_| env::var("PORT"))
@@ -39,7 +63,15 @@ impl Config {
                 .unwrap_or_else(|_| "http://localhost:8080".to_string()),
             models_dir,
             llama_server_path,
+            inference_backend,
+            layer_streaming_model,
+            layer_streaming_layers_dir,
         }
+    }
+
+    /// Returns true when the layer-streaming engine is configured.
+    pub fn is_layer_streaming(&self) -> bool {
+        self.inference_backend == "layer_streaming"
     }
 
     pub fn get_models_dir(&self) -> PathBuf {

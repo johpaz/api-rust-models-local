@@ -1,0 +1,26 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(binding = 0) buffer InputA { float a[]; };
+layout(binding = 1) buffer InputB { float b[]; };
+layout(binding = 2) buffer Output { float result[]; };
+
+layout(push_constant) uniform Constants {
+    uint M;
+    uint N;
+    uint K;
+} constants;
+
+void main() {
+    uint row = gl_GlobalInvocationID.y;
+    uint col = gl_GlobalInvocationID.x;
+
+    if (row >= constants.M || col >= constants.N) return;
+
+    float sum = 0.0;
+    for (uint i = 0; i < constants.K; i++) {
+        sum += a[row * constants.K + i] * b[i * constants.N + col];
+    }
+    result[row * constants.N + col] = sum;
+}

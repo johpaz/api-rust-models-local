@@ -1,4 +1,5 @@
 mod config;
+mod inference;
 
 use axum::{
     routing::{get, post},
@@ -11,15 +12,27 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
+use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use tower_http::cors::CorsLayer;
 use crate::config::Config;
+use crate::inference::{CompletionRequest, LayerStreamingBackend, StreamingStatus};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared state
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
 struct AppState {
     config: Config,
+    /// Layer-streaming backend — loaded at startup (if configured) or on demand.
+    streaming: Arc<RwLock<Option<LayerStreamingBackend>>>,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Request / response types (existing)
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
 struct SwitchRequest {
@@ -40,7 +53,7 @@ struct ModelsResponse {
     count: usize,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 struct ModelEntry {
     id: String,
     name: String,
@@ -54,7 +67,101 @@ struct HealthResponse {
     status: String,
     llama_server: String,
     active_model: Option<String>,
+    streaming_backend: String,
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI-compatible request / response types
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POST /v1/completions
+#[derive(Deserialize)]
+struct OaiCompletionRequest {
+    model: String,
+    prompt: String,
+    #[serde(default = "default_max_tokens")]
+    max_tokens: usize,
+    #[serde(default = "default_temperature")]
+    temperature: f32,
+}
+
+fn default_max_tokens() -> usize { 256 }
+fn default_temperature() -> f32 { 0.7 }
+
+#[derive(Serialize)]
+struct OaiCompletionResponse {
+    id: String,
+    object: String,
+    model: String,
+    choices: Vec<OaiChoice>,
+    usage: OaiUsage,
+}
+
+#[derive(Serialize)]
+struct OaiChoice {
+    text: String,
+    index: usize,
+    finish_reason: String,
+}
+
+#[derive(Serialize)]
+struct OaiUsage {
+    prompt_tokens: usize,
+    completion_tokens: usize,
+    total_tokens: usize,
+}
+
+/// POST /v1/chat/completions
+#[derive(Deserialize)]
+struct OaiChatRequest {
+    model: String,
+    messages: Vec<ChatMessage>,
+    #[serde(default = "default_max_tokens")]
+    max_tokens: usize,
+    #[serde(default = "default_temperature")]
+    temperature: f32,
+}
+
+#[derive(Deserialize, Serialize, Clone)]
+struct ChatMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Serialize)]
+struct OaiChatResponse {
+    id: String,
+    object: String,
+    model: String,
+    choices: Vec<ChatChoice>,
+    usage: OaiUsage,
+}
+
+#[derive(Serialize)]
+struct ChatChoice {
+    message: ChatMessage,
+    index: usize,
+    finish_reason: String,
+}
+
+/// POST /api/stream/load
+#[derive(Deserialize)]
+struct StreamLoadRequest {
+    model_path: String,
+    layers_dir: String,
+}
+
+#[derive(Serialize)]
+struct StreamLoadResponse {
+    status: String,
+    model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// main
+// ─────────────────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
@@ -64,25 +171,65 @@ async fn main() {
         .init();
 
     let config = Config::from_env();
-    let state = Arc::new(AppState { config: config.clone() });
 
     // Scan models at startup
     scan_models(&config.get_models_dir());
 
+    // Optionally initialise the layer-streaming backend
+    let streaming: Arc<RwLock<Option<LayerStreamingBackend>>> =
+        Arc::new(RwLock::new(None));
+
+    if config.is_layer_streaming() {
+        match (&config.layer_streaming_model, &config.layer_streaming_layers_dir) {
+            (Some(model), Some(layers)) => {
+                tracing::info!("Loading layer-streaming backend: {} -> {}", model, layers);
+                match LayerStreamingBackend::load(model, layers) {
+                    Ok(backend) => {
+                        *streaming.write().await = Some(backend);
+                        tracing::info!("Layer-streaming backend ready");
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to load layer-streaming backend: {}", e);
+                    }
+                }
+            }
+            _ => {
+                tracing::warn!(
+                    "INFERENCE_BACKEND=layer_streaming but \
+                     LAYER_STREAMING_MODEL / LAYER_STREAMING_LAYERS_DIR not set"
+                );
+            }
+        }
+    }
+
+    let state = Arc::new(AppState {
+        config: config.clone(),
+        streaming,
+    });
+
     let app = Router::new()
+        // --- UI & management (existing) ---
         .route("/", get(serve_ui))
         .route("/models.json", get(list_models))
         .route("/health", get(health_check))
         .route("/api/switch", post(switch_model))
         .route("/api/rescan", post(rescan_models))
+        // --- Layer-streaming management ---
+        .route("/api/stream/load", post(stream_load))
+        .route("/api/stream/status", get(stream_status))
+        // --- OpenAI-compatible inference ---
+        .route("/v1/models", get(oai_list_models))
+        .route("/v1/completions", post(oai_completions))
+        .route("/v1/chat/completions", post(oai_chat_completions))
         .layer(CorsLayer::permissive())
         .with_state(state);
 
     let addr = format!("{}:{}", config.host, config.port);
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
 
-    tracing::info!("🌐 LLM API Server listening on {}", addr);
-    tracing::info!("🧠 llama-server: {}", config.llama_server_url);
+    tracing::info!("LLM API Server listening on {}", addr);
+    tracing::info!("llama-server: {}", config.llama_server_url);
+    tracing::info!("Inference backend: {}", config.inference_backend);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -90,7 +237,10 @@ async fn main() {
         .unwrap();
 }
 
-/// Serve the vision template HTML
+// ─────────────────────────────────────────────────────────────────────────────
+// Existing handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
 async fn serve_ui(state: axum::extract::State<Arc<AppState>>) -> Html<String> {
     let project_root = state.config.get_project_root();
     let template_path = project_root.join("examples").join("vision-template.html");
@@ -105,7 +255,6 @@ async fn serve_ui(state: axum::extract::State<Arc<AppState>>) -> Html<String> {
     }
 }
 
-/// Scan models directory and return list
 fn scan_models(models_dir: &PathBuf) -> Vec<ModelEntry> {
     let mut models = Vec::new();
 
@@ -118,9 +267,13 @@ fn scan_models(models_dir: &PathBuf) -> Vec<ModelEntry> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "gguf") {
-                let name = path.file_name()
+                let name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_default();
+                if name.starts_with("mmproj") {
+                    continue;
+                }
                 let size_bytes = entry.metadata().map(|m| m.len()).unwrap_or(0);
                 let size_gb = size_bytes as f64 / (1024.0 * 1024.0 * 1024.0);
 
@@ -136,25 +289,22 @@ fn scan_models(models_dir: &PathBuf) -> Vec<ModelEntry> {
     }
 
     models.sort_by(|a, b| a.name.cmp(&b.name));
-    tracing::info!("📋 Found {} models", models.len());
+    tracing::info!("Found {} models", models.len());
     models
 }
 
-/// List available models
 async fn list_models(state: axum::extract::State<Arc<AppState>>) -> Json<ModelsResponse> {
     let models = scan_models(&state.config.get_models_dir());
     let count = models.len();
     Json(ModelsResponse { models, count })
 }
 
-/// Rescan models
 async fn rescan_models(state: axum::extract::State<Arc<AppState>>) -> Json<ModelsResponse> {
     let models = scan_models(&state.config.get_models_dir());
     let count = models.len();
     Json(ModelsResponse { models, count })
 }
 
-/// Health check - own + llama-server
 async fn health_check(state: axum::extract::State<Arc<AppState>>) -> Json<HealthResponse> {
     let client = reqwest::Client::new();
     let llama_status = match client
@@ -169,14 +319,22 @@ async fn health_check(state: axum::extract::State<Arc<AppState>>) -> Json<Health
 
     let active_model = get_active_model(&state.config.llama_server_url).await;
 
+    let streaming_status = {
+        let guard = state.streaming.read().await;
+        match &*guard {
+            Some(b) => format!("loaded:{}", b.model_name),
+            None => "not_loaded".to_string(),
+        }
+    };
+
     Json(HealthResponse {
         status: "ok".to_string(),
         llama_server: llama_status,
         active_model,
+        streaming_backend: streaming_status,
     })
 }
 
-/// Get currently active model from llama-server
 async fn get_active_model(llama_url: &str) -> Option<String> {
     let client = reqwest::Client::new();
     if let Ok(resp) = client
@@ -196,7 +354,6 @@ async fn get_active_model(llama_url: &str) -> Option<String> {
     None
 }
 
-/// Switch model - execute switch-model.sh script
 async fn switch_model(
     state: axum::extract::State<Arc<AppState>>,
     Json(payload): Json<SwitchRequest>,
@@ -205,7 +362,6 @@ async fn switch_model(
     let project_root = state.config.get_project_root();
     let models_dir = state.config.get_models_dir();
 
-    // Verify model exists
     let model_path = models_dir.join(&model);
     if !model_path.exists() {
         return Json(SwitchResponse {
@@ -224,9 +380,8 @@ async fn switch_model(
         });
     }
 
-    tracing::info!("🔄 Switching model to: {}", model);
+    tracing::info!("Switching model to: {}", model);
 
-    // Execute switch script in blocking thread (script takes ~1-2min)
     let script_path = switch_script.clone();
     let model_clone = model.clone();
     let result = tokio::task::spawn_blocking(move || {
@@ -234,12 +389,13 @@ async fn switch_model(
             .arg(&script_path)
             .arg(&model_clone)
             .output()
-    }).await;
+    })
+    .await;
 
     match result {
         Ok(Ok(out)) => {
             if out.status.success() {
-                tracing::info!("✅ Model switched to: {}", model);
+                tracing::info!("Model switched to: {}", model);
                 Json(SwitchResponse {
                     status: "ok".to_string(),
                     model,
@@ -248,31 +404,260 @@ async fn switch_model(
             } else {
                 let stderr = String::from_utf8_lossy(&out.stderr);
                 let stdout = String::from_utf8_lossy(&out.stdout);
-                tracing::error!("❌ Switch failed: {}", stderr);
+                tracing::error!("Switch failed: {}", stderr);
                 Json(SwitchResponse {
                     status: "error".to_string(),
                     model,
-                    error: Some(stderr.lines().last().unwrap_or(stdout.lines().last().unwrap_or("Unknown error")).to_string()),
+                    error: Some(
+                        stderr
+                            .lines()
+                            .last()
+                            .unwrap_or(stdout.lines().last().unwrap_or("Unknown error"))
+                            .to_string(),
+                    ),
                 })
             }
         }
-        Ok(Err(e)) => {
-            tracing::error!("❌ Failed to execute switch script: {}", e);
-            Json(SwitchResponse {
-                status: "error".to_string(),
-                model,
-                error: Some(format!("Failed to execute: {}", e)),
-            })
-        }
-        Err(e) => {
-            tracing::error!("❌ Join error: {}", e);
-            Json(SwitchResponse {
-                status: "error".to_string(),
-                model,
-                error: Some(format!("Internal error: {}", e)),
-            })
-        }
+        Ok(Err(e)) => Json(SwitchResponse {
+            status: "error".to_string(),
+            model,
+            error: Some(format!("Failed to execute: {}", e)),
+        }),
+        Err(e) => Json(SwitchResponse {
+            status: "error".to_string(),
+            model,
+            error: Some(format!("Internal error: {}", e)),
+        }),
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Layer-streaming management handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// POST /api/stream/load
+///
+/// Load (or reload) the layer-streaming backend at runtime, without restarting
+/// the API server.
+///
+/// ```json
+/// { "model_path": "/models/gemma.gguf", "layers_dir": "/tmp/gemma-layers/" }
+/// ```
+async fn stream_load(
+    state: axum::extract::State<Arc<AppState>>,
+    Json(payload): Json<StreamLoadRequest>,
+) -> Json<StreamLoadResponse> {
+    tracing::info!(
+        "stream/load: model={} layers={}",
+        payload.model_path,
+        payload.layers_dir,
+    );
+
+    let model_path = payload.model_path.clone();
+    let layers_dir = payload.layers_dir.clone();
+
+    let result: Result<anyhow::Result<LayerStreamingBackend>, tokio::task::JoinError> =
+        tokio::task::spawn_blocking(move || {
+            LayerStreamingBackend::load(&model_path, &layers_dir)
+        })
+        .await;
+
+    match result {
+        Ok(Ok(backend)) => {
+            let model_name = backend.model_name.clone();
+            *state.streaming.write().await = Some(backend);
+            Json(StreamLoadResponse {
+                status: "ok".to_string(),
+                model: Some(model_name),
+                error: None,
+            })
+        }
+        Ok(Err(e)) => Json(StreamLoadResponse {
+            status: "error".to_string(),
+            model: None,
+            error: Some(format!("{}", e)),
+        }),
+        Err(e) => Json(StreamLoadResponse {
+            status: "error".to_string(),
+            model: None,
+            error: Some(format!("Internal error: {}", e)),
+        }),
+    }
+}
+
+/// GET /api/stream/status
+async fn stream_status(
+    state: axum::extract::State<Arc<AppState>>,
+) -> Json<StreamingStatus> {
+    let guard = state.streaming.read().await;
+    match &*guard {
+        Some(backend) => {
+            let tokenizer = &backend.tokenizer;
+            let fw = backend.forward.lock().unwrap();
+            Json(StreamingStatus {
+                loaded: true,
+                model: Some(backend.model_name.clone()),
+                vocab_size: Some(tokenizer.vocab_size()),
+                n_layers: Some(fw.config().n_layers),
+            })
+        }
+        None => Json(StreamingStatus {
+            loaded: false,
+            model: None,
+            vocab_size: None,
+            n_layers: None,
+        }),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenAI-compatible inference handlers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GET /v1/models
+async fn oai_list_models(
+    state: axum::extract::State<Arc<AppState>>,
+) -> Json<serde_json::Value> {
+    let models = scan_models(&state.config.get_models_dir());
+    let data: Vec<serde_json::Value> = models
+        .iter()
+        .map(|m| {
+            serde_json::json!({
+                "id": m.id,
+                "object": "model",
+                "owned_by": "local",
+            })
+        })
+        .collect();
+    Json(serde_json::json!({ "object": "list", "data": data }))
+}
+
+/// POST /v1/completions  (OpenAI-compatible)
+///
+/// Routes to the layer-streaming backend if loaded, otherwise returns an error
+/// directing the client to use `/api/switch` + llama-server directly.
+async fn oai_completions(
+    state: axum::extract::State<Arc<AppState>>,
+    Json(payload): Json<OaiCompletionRequest>,
+) -> Json<serde_json::Value> {
+    let guard = state.streaming.read().await;
+    let backend = match &*guard {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "error": {
+                    "message": "Layer-streaming backend not loaded. \
+                                POST /api/stream/load first, or use llama-server on :8080.",
+                    "type": "backend_unavailable",
+                }
+            }));
+        }
+    };
+
+    let request = CompletionRequest {
+        model: payload.model,
+        prompt: payload.prompt,
+        max_tokens: payload.max_tokens,
+        temperature: payload.temperature,
+    };
+
+    match backend.complete(request).await {
+        Ok(resp) => Json(serde_json::json!(OaiCompletionResponse {
+            id: format!("cmpl-{}", uuid_simple()),
+            object: "text_completion".to_string(),
+            model: resp.model,
+            choices: vec![OaiChoice {
+                text: resp.text,
+                index: 0,
+                finish_reason: "stop".to_string(),
+            }],
+            usage: OaiUsage {
+                prompt_tokens: resp.prompt_tokens,
+                completion_tokens: resp.completion_tokens,
+                total_tokens: resp.prompt_tokens + resp.completion_tokens,
+            },
+        })),
+        Err(e) => Json(serde_json::json!({
+            "error": { "message": format!("{}", e), "type": "inference_error" }
+        })),
+    }
+}
+
+/// POST /v1/chat/completions  (OpenAI-compatible)
+///
+/// Converts the messages array into a single prompt string and delegates to
+/// the layer-streaming backend.
+async fn oai_chat_completions(
+    state: axum::extract::State<Arc<AppState>>,
+    Json(payload): Json<OaiChatRequest>,
+) -> Json<serde_json::Value> {
+    // Build a simple chat prompt from the messages
+    let prompt = payload
+        .messages
+        .iter()
+        .map(|m| format!("<|{}|>\n{}", m.role, m.content))
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n<|assistant|>\n";
+
+    let guard = state.streaming.read().await;
+    let backend = match &*guard {
+        Some(b) => b,
+        None => {
+            return Json(serde_json::json!({
+                "error": {
+                    "message": "Layer-streaming backend not loaded. \
+                                POST /api/stream/load first.",
+                    "type": "backend_unavailable",
+                }
+            }));
+        }
+    };
+
+    let request = CompletionRequest {
+        model: payload.model,
+        prompt,
+        max_tokens: payload.max_tokens,
+        temperature: payload.temperature,
+    };
+
+    match backend.complete(request).await {
+        Ok(resp) => Json(serde_json::json!(OaiChatResponse {
+            id: format!("chatcmpl-{}", uuid_simple()),
+            object: "chat.completion".to_string(),
+            model: resp.model,
+            choices: vec![ChatChoice {
+                message: ChatMessage {
+                    role: "assistant".to_string(),
+                    content: resp.text,
+                },
+                index: 0,
+                finish_reason: "stop".to_string(),
+            }],
+            usage: OaiUsage {
+                prompt_tokens: resp.prompt_tokens,
+                completion_tokens: resp.completion_tokens,
+                total_tokens: resp.prompt_tokens + resp.completion_tokens,
+            },
+        })),
+        Err(e) => Json(serde_json::json!({
+            "error": { "message": format!("{}", e), "type": "inference_error" }
+        })),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utilities
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Minimal deterministic ID generator (no external dependency).
+fn uuid_simple() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let t = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!("{:x}", t)
 }
 
 async fn shutdown_signal() {

@@ -5,6 +5,7 @@ models/*.safetensors
 
 # Build artifacts
 api/target/
+api/layer-streamer/target/
 llama-server/build/
 llama-server/build-native/
 llama-server/*.gguf
@@ -35,3 +36,8 @@ logs/
 # Temporary
 tmp/
 temp/
+
+# Agentes
+.claude/
+.qwen/
+

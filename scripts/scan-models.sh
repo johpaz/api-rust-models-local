@@ -8,11 +8,15 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 MODELS_DIR="$PROJECT_ROOT/models"
 OUTPUT_FILE="$MODELS_DIR/models.json"
 
-# Escanear archivos .gguf
+# Escanear archivos .gguf (excluir mmproj)
 models=()
 for f in "$MODELS_DIR"/*.gguf; do
     [ -f "$f" ] || continue
     filename=$(basename "$f")
+    # Skip mmproj files
+    case "$filename" in
+        mmproj*) continue ;;
+    esac
     size_bytes=$(stat -c%s "$f" 2>/dev/null || stat -f%z "$f" 2>/dev/null || echo "0")
     size_gb=$(echo "scale=1; $size_bytes / 1073741824" | bc 2>/dev/null || echo "?")
     models+=("{\"id\":\"$filename\",\"name\":\"$filename\",\"size_bytes\":$size_bytes,\"size_human\":\"${size_gb} GB\"}")

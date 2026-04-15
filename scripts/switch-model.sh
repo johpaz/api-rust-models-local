@@ -70,6 +70,12 @@ ARGS=(
     "--cache-type-v" "$CACHE_TYPE_V"
 )
 
+# Add multimodal projector if available
+MMPROJ_FILE=$(find "$MODELS_DIR" -name "mmproj*.gguf" -o -name "*mmproj*.gguf" 2>/dev/null | head -1)
+if [ -n "$MMPROJ_FILE" ]; then
+    ARGS+=("--mmproj" "$MMPROJ_FILE")
+fi
+
 # Add flash-attn for turboquant
 if [[ "$CACHE_TYPE_K" == turbo* ]] || [[ "$CACHE_TYPE_V" == turbo* ]]; then
     ARGS+=("--flash-attn" "on")

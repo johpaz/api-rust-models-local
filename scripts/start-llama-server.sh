@@ -82,7 +82,8 @@ MODELS_DIR="$PROJECT_ROOT/models"
 # Si no hay MODEL_NAME en .env, seleccionar primer .gguf alfabéticamente
 if [ -z "$MODEL_NAME" ]; then
     echo "🔍 Auto-descubriendo modelos en $MODELS_DIR..."
-    MODEL_NAME=$(find "$MODELS_DIR" -maxdepth 1 -name "*.gguf" -printf "%f\n" 2>/dev/null | sort | head -1)
+    # Excluir archivos mmproj (no son modelos principales)
+    MODEL_NAME=$(find "$MODELS_DIR" -maxdepth 1 -name "*.gguf" ! -name "mmproj*" -printf "%f\n" 2>/dev/null | sort | head -1)
     if [ -z "$MODEL_NAME" ]; then
         echo "❌ No se encontraron modelos .gguf en $MODELS_DIR"
         echo "Descarga un modelo con:"
@@ -178,6 +179,13 @@ ARGS=(
     "--cache-type-k" "$CACHE_TYPE_K"
     "--cache-type-v" "$CACHE_TYPE_V"
 )
+
+# Add multimodal projector if available (skip for now - wrong version causes crash)
+# MMPROJ_FILE=$(find "$MODELS_DIR" -maxdepth 1 -name "mmproj*.gguf" ! -name "mmproj-F32*" 2>/dev/null | head -1)
+# if [ -n "$MMPROJ_FILE" ]; then
+#     echo "🖼️  Multimodal projector encontrado: $(basename "$MMPROJ_FILE")"
+#     ARGS+=("--mmproj" "$MMPROJ_FILE")
+# fi
 
 # Agregar flash-attn si usa turboquant (turbo2/3/4)
 if [[ "$CACHE_TYPE_K" == turbo* ]] || [[ "$CACHE_TYPE_V" == turbo* ]]; then

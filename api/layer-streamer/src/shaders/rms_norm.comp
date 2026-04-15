@@ -1,0 +1,25 @@
+#version 450
+
+layout(local_size_x = 256) in;
+
+layout(binding = 0) buffer Input { float x[]; };
+layout(binding = 1) buffer Weight { float w[]; };
+layout(binding = 2) buffer Output { float result[]; };
+
+layout(push_constant) uniform Constants {
+    uint N;
+    float eps;
+} constants;
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= constants.N) return;
+
+    float rms = 0.0;
+    for (uint j = 0; j < constants.N; j++) {
+        rms += x[j] * x[j];
+    }
+    rms = sqrt(rms / float(constants.N) + constants.eps);
+
+    result[i] = x[i] / rms * w[i];
+}

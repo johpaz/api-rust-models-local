@@ -840,12 +840,43 @@
                 modelStatus.textContent = `✅ Activo: ${currentActiveModel}`;
                 modelStatus.style.color = 'var(--success)';
             } else {
-                modelStatus.innerHTML = `⚠️ Activo: <b>${currentActiveModel || '?'}</b>. Para cambiar:<br><code style="font-size:0.75rem">./scripts/switch-model.sh ${selected}</code>`;
+                modelStatus.textContent = `🔄 Cambiando a ${selected}...`;
                 modelStatus.style.color = 'var(--warning)';
             }
         }
 
-        modelSelect.addEventListener('change', () => updateModelStatus());
+        modelSelect.addEventListener('change', async (e) => {
+            const selected = e.target.value;
+            if (!selected || selected === currentActiveModel) {
+                updateModelStatus();
+                return;
+            }
+            updateModelStatus();
+
+            try {
+                const resp = await fetch('/api/switch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model: selected })
+                });
+                const result = await resp.json();
+
+                if (result.status === 'ok') {
+                    currentActiveModel = selected;
+                    modelStatus.textContent = `✅ Activo: ${selected}`;
+                    modelStatus.style.color = 'var(--success)';
+                    addMessage('system', `✅ Modelo cambiado a: ${selected}`);
+                } else {
+                    modelStatus.textContent = `❌ Error: ${result.error || 'desconocido'}`;
+                    modelStatus.style.color = 'var(--error)';
+                    addMessage('system', `❌ Error cambiando modelo: ${result.error}`);
+                }
+            } catch (err) {
+                modelStatus.textContent = `❌ Error de conexión`;
+                modelStatus.style.color = 'var(--error)';
+                addMessage('system', `❌ Error cambiando modelo: ${err.message}`);
+            }
+        });
 
         document.getElementById('modelsUrl').addEventListener('change', loadModels);
 
